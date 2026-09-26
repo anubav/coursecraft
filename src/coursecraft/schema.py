@@ -166,3 +166,26 @@ class CourseConfig(BaseModel):
     def from_yaml(cls, path: str | Path) -> "CourseConfig":
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
         return cls.model_validate(raw)
+
+    @classmethod
+    def load_course_info(cls, path: str | Path) -> CourseInfo:
+        """Partial parse: validates only the top-level `course:` block
+        (title/notes_repo/notes_branch/solutions_repo), ignoring
+        section/lectures/assignments entirely -- because they're
+        allowed not to exist yet. fetch-notes needs to know where the
+        notes repo is, and runs before the rest of course.yaml is
+        necessarily filled in (right after `init` scaffolds it with
+        REPLACE_ME everywhere else, before the course.yaml-filling
+        wizard has had a chance to run)."""
+        raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        return _CourseSectionOnly.model_validate(raw).course
+
+
+class _CourseSectionOnly(BaseModel):
+    """Private helper for load_course_info -- deliberately just the
+    `course:` block. Extra top-level keys (section/lectures/
+    assignments) are silently ignored, not errors: neither CourseInfo
+    nor this wrapper sets extra="forbid", so validating this smaller
+    model against a full course.yaml dict only checks what it
+    declares and never touches the rest."""
+    course: CourseInfo

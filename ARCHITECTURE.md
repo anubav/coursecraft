@@ -303,6 +303,19 @@ folder) now fails immediately and clearly instead of silently cloning
 a nested `notes/notes/`. Confirmed by reproducing the exact failure
 against the real repo before and after the fix.
 
+`fetch-notes` validates only the `course:` block of `course.yaml`
+(`CourseConfig.load_course_info`), not the whole file. This matters
+because `fetch-notes` runs *before* the intended course.yaml-filling
+wizard, right after `init` has scaffolded every other required field
+as a literal `REPLACE_ME` -- a full `CourseConfig.from_yaml` validation
+at this point would always fail on the placeholder dates, blocking
+exactly the workflow `init` -> `fetch-notes` -> wizard -> `update` was
+designed to support. Confirmed as a real bug, not a hypothetical: the
+original implementation genuinely failed against a freshly-`init`'d
+`course.yaml` before this fix, and genuinely succeeds after it. Full
+validation of the whole file (`coursecraft validate`) remains exactly
+as strict as before -- only `fetch-notes`'s own narrower need changed.
+
 `notes_branch` (optional, defaults to the repo's own default branch)
 exists because an instructor may want to build a section off their
 own long-lived custom branch of the notes repo, without ever intending

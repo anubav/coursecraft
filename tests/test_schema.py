@@ -157,6 +157,65 @@ class TestValidators:
         assert config.assignments[0].exercises == ["expressions"]
 
 
+class TestLoadCourseInfo:
+    """load_course_info is what fetch-notes uses -- must succeed even
+    when section/lectures/assignments are still full of REPLACE_ME
+    placeholders (e.g. right after `init`, before the course.yaml-
+    filling wizard has run), since it only validates the course: block."""
+
+    def test_ignores_placeholder_section(self, tmp_path):
+        import yaml
+        data = {
+            "course": {
+                "title": "REPLACE_ME",
+                "notes_repo": "https://example.com/notes.git",
+            },
+            "section": {
+                "instructor": "REPLACE_ME", "course_number": "REPLACE_ME",
+                "term": "REPLACE_ME", "location": "REPLACE_ME",
+                "meeting_times": "REPLACE_ME",
+                "start_date": "REPLACE_ME", "end_date": "REPLACE_ME",
+            },
+            "lectures": [], "assignments": [],
+        }
+        path = tmp_path / "course.yaml"
+        path.write_text(yaml.dump(data))
+
+        info = CourseConfig.load_course_info(path)
+        assert info.notes_repo == "https://example.com/notes.git"
+
+    def test_notes_branch_available_too(self, tmp_path):
+        import yaml
+        data = {
+            "course": {
+                "title": "REPLACE_ME",
+                "notes_repo": "https://example.com/notes.git",
+                "notes_branch": "kevin-custom",
+            },
+        }
+        path = tmp_path / "course.yaml"
+        path.write_text(yaml.dump(data))
+
+        info = CourseConfig.load_course_info(path)
+        assert info.notes_branch == "kevin-custom"
+
+    def test_missing_notes_repo_still_rejected(self, tmp_path):
+        import yaml
+        path = tmp_path / "course.yaml"
+        path.write_text(yaml.dump({"course": {"title": "x"}}))
+
+        with pytest.raises(ValidationError, match="Field required"):
+            CourseConfig.load_course_info(path)
+
+    def test_missing_course_block_rejected(self, tmp_path):
+        import yaml
+        path = tmp_path / "course.yaml"
+        path.write_text(yaml.dump({"section": {}}))
+
+        with pytest.raises(ValidationError):
+            CourseConfig.load_course_info(path)
+
+
 class TestAssignmentDefaults:
     def test_show_solutions_defaults_false(self, base_config):
         config = CourseConfig.model_validate(base_config)

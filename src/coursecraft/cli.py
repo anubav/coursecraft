@@ -111,7 +111,7 @@ def _cmd_fetch_notes(args) -> int:
         return 1
 
     try:
-        config = CourseConfig.from_yaml(course_yaml)
+        course_info = CourseConfig.load_course_info(course_yaml)
     except ValidationError as e:
         print(f'{course_yaml}: INVALID\n')
         print(e)
@@ -119,8 +119,8 @@ def _cmd_fetch_notes(args) -> int:
 
     try:
         target, branch = fetch_notes(
-            repo_url=config.course.notes_repo,
-            source_branch=config.course.notes_branch,
+            repo_url=course_info.notes_repo,
+            source_branch=course_info.notes_branch,
             branch=args.branch,
             target_dir=args.target,
         )
@@ -128,8 +128,8 @@ def _cmd_fetch_notes(args) -> int:
         print(f'fetch-notes failed: {e}')
         return 1
 
-    src_note = f" (branch {config.course.notes_branch!r})" if config.course.notes_branch else ""
-    print(f'Cloned {config.course.notes_repo}{src_note} -> {target} '
+    src_note = f" (branch {course_info.notes_branch!r})" if course_info.notes_branch else ""
+    print(f'Cloned {course_info.notes_repo}{src_note} -> {target} '
           f'on branch {branch!r} (pushed)')
 
     manifest_path = target / 'coursecraft.yml'
