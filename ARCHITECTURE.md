@@ -386,6 +386,40 @@ distinct identity (`coursecraft <coursecraft@localhost>`) is also just
 correct on its own terms: a 100%-generated commit shouldn't be
 attributed to whichever human happened to be running the command.
 
+## `_gitutil.py`: extracted before it would have tripled, not after
+
+`fetch.py` and `init.py` each grew their own near-identical `_run`
+helper and exception class. Duplicating it once (in `init.py`) was a
+deliberate, deferred decision -- premature abstraction from a single
+example would have been guessing at the right shape. But `update.py`
+and `deploy.py` are next, and both need the exact same
+subprocess-running pattern; leaving the duplication in place at this
+point would have meant going from two copies to four, a meaningfully
+worse place to do this refactor from. `run_git`/`run_git_with_spinner`
+now live in `_gitutil.py`; `fetch.py`'s `_run`/`_run_with_spinner` and
+`init.py`'s `_run` are thin wrappers that translate the shared
+`GitCommandError` into their own command-specific exception type
+(`FetchNotesError`, `InitError`), preserving every existing test's
+`pytest.raises(FetchNotesError, ...)`/`patch("coursecraft.fetch._run")`
+assertions unchanged.
+
+This refactor caught a real regression before it shipped, not a
+hypothetical one worth mentioning for color: the first version of
+`run_git_with_spinner` called `run_git` directly rather than through
+whatever runner the caller had wrapped, which meant
+`patch("coursecraft.fetch._run")` silently stopped intercepting the
+clone step specifically -- the mocked tests kept passing their
+assertions on the *other* commands (checkout, push) while the actual
+`git clone` ran for real against a fake test URL, only surfacing as a
+network error. Fixed by making `run_git_with_spinner` take the
+single-command runner as a parameter (default `run_git`), so a caller
+that wraps it in its own exception-translating `_run` gets that same
+wrapper called from inside the spinner's background thread too.
+Confirmed fixed by both the full test suite and a live re-run against
+the real `logic-notes` repo, matching every prior verification's
+degree of skepticism rather than trusting the refactor because it
+looked right on paper.
+
 ## Package structure
 
 ```
@@ -398,6 +432,7 @@ src/coursecraft/
 ├── schema.py       # course.yaml: Pydantic models + validation
 ├── manifest.py     # coursecraft.yml: Pydantic model + validation
 ├── repo_checks.py  # checks a real notes repo's content against its manifest
+├── _gitutil.py     # shared subprocess-running helpers for git ops
 ├── fetch.py        # fetch-notes: clone onto a section/<name> branch
 ├── init.py         # init: scaffold course/ + a placeholder course.yaml
 └── cli.py          # thin argparse wrapper: reflow / lint / validate /
@@ -422,3 +457,18 @@ line-start collision, the footnote-continuation-indentation strip), the
 corresponding test is a **regression test** for that exact bug, not a
 generic "does it work" check -- the goal is that if any of these ever
 break again, `pytest` catches it before a render does.
+
+`cli.py` went untested at the direct level for longer than everything
+else -- it's thin wiring over already-tested modules, so each new
+subcommand was verified live/manually instead. `test_cli.py` closes
+that gap once `cli.py` had grown to six subcommands, and immediately
+caught a real bug on its first run (in the test file itself, not
+`cli.py`: a fixture-setup test forgot to create a parent directory
+before populating it) -- a small reminder that "this file has never
+had a bug" and "this file has never been tested" aren't the same
+claim. Real execution is used everywhere it's safe and fast (every
+subcommand except `fetch-notes`, which is mocked specifically to keep
+the test suite from making real network calls); `init`, being local
+and already covered thoroughly at the library level, is still run for
+real here too, since these tests are about the wiring on top of it,
+not re-proving `init()` itself works.

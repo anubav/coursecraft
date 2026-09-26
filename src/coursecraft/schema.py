@@ -113,6 +113,16 @@ class Assignment(BaseModel):
         return self
 
 
+class _CourseSectionOnly(BaseModel):
+    """Private helper for CourseConfig.load_course_info -- deliberately
+    just the `course:` block. Extra top-level keys (section/lectures/
+    assignments) are silently ignored, not errors: neither CourseInfo
+    nor this wrapper sets extra="forbid", so validating this smaller
+    model against a full course.yaml dict only checks what it
+    declares and never touches the rest."""
+    course: CourseInfo
+
+
 class CourseConfig(BaseModel):
     course: CourseInfo
     section: SectionInfo
@@ -179,13 +189,3 @@ class CourseConfig(BaseModel):
         wizard has had a chance to run)."""
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
         return _CourseSectionOnly.model_validate(raw).course
-
-
-class _CourseSectionOnly(BaseModel):
-    """Private helper for load_course_info -- deliberately just the
-    `course:` block. Extra top-level keys (section/lectures/
-    assignments) are silently ignored, not errors: neither CourseInfo
-    nor this wrapper sets extra="forbid", so validating this smaller
-    model against a full course.yaml dict only checks what it
-    declares and never touches the rest."""
-    course: CourseInfo

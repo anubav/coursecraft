@@ -15,11 +15,12 @@ a real external side effect (a pushed branch). Composing them is
 """
 
 import os
-import subprocess
 from pathlib import Path
 from typing import Optional
 
 import yaml
+
+from ._gitutil import run_git, GitCommandError
 
 PLACEHOLDER = "REPLACE_ME"
 
@@ -56,11 +57,11 @@ class InitError(Exception):
     pass
 
 
-def _run(cmd: list[str], env: Optional[dict] = None) -> subprocess.CompletedProcess:
-    result = subprocess.run(cmd, capture_output=True, text=True, env=env)
-    if result.returncode != 0:
-        raise InitError(f"command failed: {' '.join(cmd)}\n{result.stderr.strip()}")
-    return result
+def _run(cmd: list[str], env: Optional[dict] = None):
+    try:
+        return run_git(cmd, env=env)
+    except GitCommandError as e:
+        raise InitError(str(e)) from e
 
 
 def _scaffold_course_yaml(

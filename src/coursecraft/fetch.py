@@ -12,59 +12,26 @@ created around the same time can't silently collide on the same
 branch name; the collision is caught here instead of discovered later.
 """
 
-import itertools
 import subprocess
-import sys
-import threading
-import time
 from pathlib import Path
 from typing import Optional
+
+from ._gitutil import run_git, run_git_with_spinner, GitCommandError
 
 
 class FetchNotesError(Exception):
     pass
 
 
-def _run(cmd: list[str]) -> subprocess.CompletedProcess:
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise FetchNotesError(
-            f"command failed: {' '.join(cmd)}\n{result.stderr.strip()}"
-        )
-    return result
+def _run(cmd: list[str], env: Optional[dict] = None) -> subprocess.CompletedProcess:
+    try:
+        return run_git(cmd, env=env)
+    except GitCommandError as e:
+        raise FetchNotesError(str(e)) from e
 
 
 def _run_with_spinner(cmd: list[str], message: str) -> subprocess.CompletedProcess:
-    """Like _run, but shows a cycling-ellipsis progress indicator on
-    the same line while cmd runs in the background -- a clone can take
-    a while with no other output, and this is just so it doesn't look
-    hung. Purely cosmetic: the actual work and error handling are
-    still done by _run, called from a background thread."""
-    outcome: dict = {}
-
-    def target():
-        try:
-            outcome['result'] = _run(cmd)
-        except FetchNotesError as e:
-            outcome['error'] = e
-
-    thread = threading.Thread(target=target)
-    thread.start()
-
-    dots_cycle = itertools.cycle(['', '.', '..', '...'])
-    max_width = len(message) + 3
-    while thread.is_alive():
-        line = f'{message}{next(dots_cycle)}'
-        sys.stdout.write('\r' + line.ljust(max_width))
-        sys.stdout.flush()
-        time.sleep(0.4)
-    thread.join()
-    sys.stdout.write('\r' + ' ' * max_width + '\r')
-    sys.stdout.flush()
-
-    if 'error' in outcome:
-        raise outcome['error']
-    return outcome['result']
+    return run_git_with_spinner(cmd, message, runner=_run)
 
 
 def branch_exists_on_remote(repo_url: str, branch: str) -> bool:
