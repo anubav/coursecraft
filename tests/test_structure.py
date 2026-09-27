@@ -5,6 +5,7 @@ from coursecraft.structure import (
     is_fence_line,
     blank_gap_continues_list,
     LIST_ITEM_RE,
+    find_headings,
 )
 
 
@@ -158,3 +159,52 @@ class TestListItemRegex:
     def test_bare_paren_marker(self):
         m = LIST_ITEM_RE.match("1) Some text")
         assert m and m.group(3) == "1" and m.group(4) == ")"
+
+
+class TestFindHeadings:
+    def test_finds_all_levels_by_default(self):
+        text = "# Chapter {#sec-x .chapter}\n\n## Sub {#sec-x-sub}\n\n### Subsub\n"
+        headings = find_headings(text)
+        assert [h.level for h in headings] == [1, 2, 3]
+
+    def test_level_filter(self):
+        text = "# Chapter {#sec-x .chapter}\n\n## Sub {#sec-x-sub}\n\n### Subsub\n"
+        headings = find_headings(text, level=2)
+        assert len(headings) == 1
+        assert headings[0].heading_text.startswith('Sub')
+
+    def test_label_extracted(self):
+        text = "## Validity {#sec-x-validity}\n"
+        h = find_headings(text, level=2)[0]
+        assert h.label == 'sec-x-validity'
+
+    def test_label_none_when_absent(self):
+        text = "## No Label\n"
+        h = find_headings(text, level=2)[0]
+        assert h.label is None
+
+    def test_line_number_is_1_indexed(self):
+        text = "text\n\n## Section {#sec-x}\n"
+        h = find_headings(text, level=2)[0]
+        assert h.line_number == 3
+
+    def test_heading_text_left_raw_including_attrs(self):
+        """find_headings deliberately doesn't strip the {...} block --
+        that's each caller's own choice (see toc.py's _clean_title)."""
+        text = "## References {.unnumbered}\n"
+        h = find_headings(text, level=2)[0]
+        assert h.heading_text == 'References {.unnumbered}'
+
+    def test_decorative_heading_inside_div_excluded(self):
+        text = (
+            "## Real {#sec-x-real}\n\n"
+            ":::{#thm-foo .theorem}\n## Transitivity\ncontent\n:::\n"
+        )
+        headings = find_headings(text, level=2)
+        assert len(headings) == 1
+        assert headings[0].label == 'sec-x-real'
+
+    def test_heading_inside_code_fence_excluded(self):
+        text = "## Real {#sec-x}\n\n```\n## not real\n```\n"
+        headings = find_headings(text, level=2)
+        assert len(headings) == 1

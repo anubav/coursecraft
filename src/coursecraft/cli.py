@@ -11,6 +11,7 @@ from .manifest import NotesManifest
 from .repo_checks import run_all_checks
 from .fetch import fetch_notes, FetchNotesError
 from .init import init, InitError
+from .toc import build_toc, write_toc_yaml, TocError
 
 
 def _cmd_reflow(args) -> int:
@@ -105,9 +106,9 @@ def _cmd_validate_notes(args) -> int:
 
 
 def _cmd_fetch_notes(args) -> int:
-    course_yaml = Path('course.yaml')
+    course_yaml = Path('course.yml')
     if not course_yaml.exists():
-        print('fetch-notes failed: no course.yaml found in the current directory.')
+        print('fetch-notes failed: no course.yml found in the current directory.')
         return 1
 
     try:
@@ -161,7 +162,26 @@ def _cmd_init(args) -> int:
         return 1
 
     print(f"Created '{course_path}'.")
-    print('Created course.yaml.' if wrote_yaml else 'course.yaml already exists.')
+    print('Created course.yml.' if wrote_yaml else 'course.yml already exists.')
+    return 0
+
+
+def _cmd_toc(args) -> int:
+    notes_path = Path('notes')
+    if not notes_path.exists():
+        print("toc failed: 'notes' not found.")
+        return 1
+
+    try:
+        toc_data = build_toc(notes_path)
+    except TocError as e:
+        print(f'toc failed: {e}')
+        return 1
+
+    write_toc_yaml(toc_data)
+    n_chapters = len(toc_data['chapters'])
+    n_appendices = len(toc_data['appendices'])
+    print(f'Wrote toc.yml ({n_chapters} chapter(s), {n_appendices} appendix(es)).')
     return 0
 
 
@@ -194,9 +214,9 @@ def main() -> None:
 
     validate_p = sub.add_parser(
         'validate',
-        help='Validate a course.yaml file and summarize its schedule.',
+        help='Validate a course.yml file and summarize its schedule.',
     )
-    validate_p.add_argument('path', help='Path to course.yaml')
+    validate_p.add_argument('path', help='Path to course.yml')
     validate_p.set_defaults(func=_cmd_validate)
 
     validate_notes_p = sub.add_parser(
@@ -212,10 +232,10 @@ def main() -> None:
 
     fetch_notes_p = sub.add_parser(
         'fetch-notes',
-        help='Clone the notes repo declared in ./course.yaml into '
+        help='Clone the notes repo declared in ./course.yml into '
              './notes on a fresh section/<name> branch (pushed '
              'immediately), then run validate-notes. Requires a valid '
-             'course.yaml in the current directory.',
+             'course.yml in the current directory.',
     )
     fetch_notes_p.add_argument(
         '--branch', default=None,
@@ -230,14 +250,21 @@ def main() -> None:
     init_p = sub.add_parser(
         'init',
         help='Create ./course/ (a fresh, protected git repo) and, if '
-             'missing, a placeholder ./course.yaml.',
+             'missing, a placeholder ./course.yml.',
     )
-    init_p.add_argument('notes_repo', help='URL of the notes repo for course.yaml')
+    init_p.add_argument('notes_repo', help='URL of the notes repo for course.yml')
     init_p.add_argument(
         '--notes-branch', default=None,
         help='Branch of the notes repo (default: its own default branch)',
     )
     init_p.set_defaults(func=_cmd_init)
+
+    toc_p = sub.add_parser(
+        'toc',
+        help='Build ./toc.yml from ./notes, ordered by '
+             'notes/_quarto.yml (not lexical filename order).',
+    )
+    toc_p.set_defaults(func=_cmd_toc)
 
     args = parser.parse_args()
     sys.exit(args.func(args))

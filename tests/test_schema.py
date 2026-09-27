@@ -160,7 +160,7 @@ class TestValidators:
 class TestLoadCourseInfo:
     """load_course_info is what fetch-notes uses -- must succeed even
     when section/lectures/assignments are still full of REPLACE_ME
-    placeholders (e.g. right after `init`, before the course.yaml-
+    placeholders (e.g. right after `init`, before the course.yml-
     filling wizard has run), since it only validates the course: block."""
 
     def test_ignores_placeholder_section(self, tmp_path):
@@ -178,7 +178,7 @@ class TestLoadCourseInfo:
             },
             "lectures": [], "assignments": [],
         }
-        path = tmp_path / "course.yaml"
+        path = tmp_path / "course.yml"
         path.write_text(yaml.dump(data))
 
         info = CourseConfig.load_course_info(path)
@@ -193,7 +193,7 @@ class TestLoadCourseInfo:
                 "notes_branch": "kevin-custom",
             },
         }
-        path = tmp_path / "course.yaml"
+        path = tmp_path / "course.yml"
         path.write_text(yaml.dump(data))
 
         info = CourseConfig.load_course_info(path)
@@ -201,7 +201,7 @@ class TestLoadCourseInfo:
 
     def test_missing_notes_repo_still_rejected(self, tmp_path):
         import yaml
-        path = tmp_path / "course.yaml"
+        path = tmp_path / "course.yml"
         path.write_text(yaml.dump({"course": {"title": "x"}}))
 
         with pytest.raises(ValidationError, match="Field required"):
@@ -209,7 +209,7 @@ class TestLoadCourseInfo:
 
     def test_missing_course_block_rejected(self, tmp_path):
         import yaml
-        path = tmp_path / "course.yaml"
+        path = tmp_path / "course.yml"
         path.write_text(yaml.dump({"section": {}}))
 
         with pytest.raises(ValidationError):

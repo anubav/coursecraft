@@ -1,7 +1,7 @@
 """
 coursecraft.yml schema -- the portability manifest a notes repo (like
 logic-notes) declares, telling coursecraft how to interpret its
-structure. Kept separate from schema.py deliberately: course.yaml
+structure. Kept separate from schema.py deliberately: course.yml
 describes one section's schedule and is different for every section;
 this describes the shape of the master content itself, and is the
 same for every section built from a given notes repo. See

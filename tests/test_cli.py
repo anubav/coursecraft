@@ -102,7 +102,7 @@ class TestValidateCLI:
     }
 
     def test_valid_file_exits_zero(self, tmp_path, monkeypatch, capsys):
-        f = tmp_path / "course.yaml"
+        f = tmp_path / "course.yml"
         f.write_text(yaml.dump(self.VALID))
 
         code = run_cli(['validate', str(f)], monkeypatch)
@@ -111,7 +111,7 @@ class TestValidateCLI:
         assert 'OK' in capsys.readouterr().out
 
     def test_invalid_file_exits_one(self, tmp_path, monkeypatch, capsys):
-        f = tmp_path / "course.yaml"
+        f = tmp_path / "course.yml"
         f.write_text(yaml.dump({"course": {"title": "x"}}))  # missing notes_repo
 
         code = run_cli(['validate', str(f)], monkeypatch)
@@ -185,7 +185,7 @@ class TestValidateNotesCLI:
 class TestFetchNotesCLI:
     """Mocks fetch_notes specifically -- the one subcommand where real
     execution would mean real network calls. Everything else about
-    the wiring (course.yaml parsing, argument threading, error
+    the wiring (course.yml parsing, argument threading, error
     reporting) is exercised for real."""
 
     VALID_COURSE = {"course": {"title": "x", "notes_repo": "https://example.com/n.git"}}
@@ -197,12 +197,12 @@ class TestFetchNotesCLI:
         code = run_cli(['fetch-notes'], monkeypatch)
         assert code == 1
         assert capsys.readouterr().out.strip() == (
-            'fetch-notes failed: no course.yaml found in the current directory.'
+            'fetch-notes failed: no course.yml found in the current directory.'
         )
 
     def test_invalid_course_yaml_exits_one(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "course.yaml").write_text(yaml.dump({"course": {"title": "x"}}))
+        (tmp_path / "course.yml").write_text(yaml.dump({"course": {"title": "x"}}))
         code = run_cli(['fetch-notes'], monkeypatch)
         assert code == 1
         assert 'INVALID' in capsys.readouterr().out
@@ -215,7 +215,7 @@ class TestFetchNotesCLI:
             "title": "x", "notes_repo": "https://example.com/n.git",
             "notes_branch": "kevin-custom",
         }}
-        (tmp_path / "course.yaml").write_text(yaml.dump(data))
+        (tmp_path / "course.yml").write_text(yaml.dump(data))
 
         with patch('coursecraft.cli.fetch_notes') as mock_fetch:
             mock_fetch.return_value = (tmp_path / "notes", "section/x")
@@ -230,7 +230,7 @@ class TestFetchNotesCLI:
 
     def test_branch_and_target_flags_threaded_through(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "course.yaml").write_text(yaml.dump(self.VALID_COURSE))
+        (tmp_path / "course.yml").write_text(yaml.dump(self.VALID_COURSE))
 
         with patch('coursecraft.cli.fetch_notes') as mock_fetch:
             mock_fetch.return_value = (tmp_path / "custom", "section/mine")
@@ -247,7 +247,7 @@ class TestFetchNotesCLI:
         self, tmp_path, monkeypatch, capsys
     ):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "course.yaml").write_text(yaml.dump(self.VALID_COURSE))
+        (tmp_path / "course.yml").write_text(yaml.dump(self.VALID_COURSE))
 
         with patch('coursecraft.cli.fetch_notes') as mock_fetch:
             mock_fetch.side_effect = FetchNotesError("'notes' already exists.")
@@ -258,7 +258,7 @@ class TestFetchNotesCLI:
 
     def test_skips_validate_notes_if_no_manifest(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "course.yaml").write_text(yaml.dump(self.VALID_COURSE))
+        (tmp_path / "course.yml").write_text(yaml.dump(self.VALID_COURSE))
         cloned = tmp_path / "notes"
         cloned.mkdir()
 
@@ -271,7 +271,7 @@ class TestFetchNotesCLI:
 
     def test_runs_validate_notes_after_successful_clone(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "course.yaml").write_text(yaml.dump(self.VALID_COURSE))
+        (tmp_path / "course.yml").write_text(yaml.dump(self.VALID_COURSE))
         cloned = tmp_path / "notes"
         cloned.mkdir()
         TestValidateNotesCLI()._make_minimal_repo(cloned)  # reuse the fixture repo
@@ -295,7 +295,7 @@ class TestInitCLI:
         assert code == 0
         out = capsys.readouterr().out
         assert "Created 'course'" in out
-        assert 'Created course.yaml' in out
+        assert 'Created course.yml' in out
         assert (tmp_path / "course").is_dir()
 
     def test_existing_course_dir_exits_one(self, tmp_path, monkeypatch, capsys):
@@ -311,14 +311,74 @@ class TestInitCLI:
             ['init', 'https://example.com/notes.git', '--notes-branch', 'kevin-custom'],
             monkeypatch,
         )
-        data = yaml.safe_load((tmp_path / "course.yaml").read_text())
+        data = yaml.safe_load((tmp_path / "course.yml").read_text())
         assert data['course']['notes_branch'] == 'kevin-custom'
 
     def test_existing_course_yaml_message(self, tmp_path, monkeypatch, capsys):
         monkeypatch.chdir(tmp_path)
-        (tmp_path / "course.yaml").write_text("course:\n  title: real\n")
+        (tmp_path / "course.yml").write_text("course:\n  title: real\n")
 
         code = run_cli(['init', 'https://example.com/notes.git'], monkeypatch)
 
         assert code == 0
-        assert 'course.yaml already exists' in capsys.readouterr().out
+        assert 'course.yml already exists' in capsys.readouterr().out
+
+
+class TestTocCLI:
+    def test_missing_notes_exits_one(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        code = run_cli(['toc'], monkeypatch)
+        assert code == 1
+        assert capsys.readouterr().out.strip() == "toc failed: 'notes' not found."
+
+    def test_writes_toc_yml_for_real_notes_dir(self, tmp_path, monkeypatch, capsys):
+        import yaml
+        monkeypatch.chdir(tmp_path)
+        notes = tmp_path / "notes"
+        (notes / "chapters").mkdir(parents=True)
+        (notes / "chapters" / "one.qmd").write_text(
+            "# Chapter One {#sec-one .chapter}\n\n## Intro {#sec-one-intro}\n"
+        )
+        (notes / "coursecraft.yml").write_text(yaml.dump({
+            "coursecraft_spec": "1.0",
+            "conventions": {
+                "chapter_glob": "chapters/*.qmd",
+                "appendix_dir_glob": "appendices/*.qmd",
+                "exercise_glob": "exercises/*.qmd",
+                "insert_glob": "inserts/**/*.qmd",
+            },
+        }))
+        (notes / "_quarto.yml").write_text(yaml.dump({
+            "book": {"chapters": ["chapters/one.qmd"]}
+        }))
+
+        code = run_cli(['toc'], monkeypatch)
+
+        assert code == 0
+        assert '1 chapter(s), 0 appendix(es)' in capsys.readouterr().out
+        toc_data = yaml.safe_load((tmp_path / "toc.yml").read_text())
+        assert toc_data["chapters"][0]["title"] == "Chapter One"
+
+    def test_toc_yml_written_beside_course_not_inside_notes(self, tmp_path, monkeypatch):
+        """toc.yml is derived data about notes/, but must never be
+        written INSIDE notes/ itself -- that's a git clone pushed back
+        to the master repo, and a stray file there could get committed
+        upstream by accident."""
+        import yaml
+        monkeypatch.chdir(tmp_path)
+        notes = tmp_path / "notes"
+        (notes / "chapters").mkdir(parents=True)
+        (notes / "chapters" / "one.qmd").write_text("# Chapter One {#sec-one .chapter}\n")
+        (notes / "coursecraft.yml").write_text(yaml.dump({
+            "coursecraft_spec": "1.0",
+            "conventions": {
+                "chapter_glob": "chapters/*.qmd", "appendix_dir_glob": "appendices/*.qmd",
+                "exercise_glob": "exercises/*.qmd", "insert_glob": "inserts/**/*.qmd",
+            },
+        }))
+        (notes / "_quarto.yml").write_text(yaml.dump({"book": {"chapters": ["chapters/one.qmd"]}}))
+
+        run_cli(['toc'], monkeypatch)
+
+        assert (tmp_path / "toc.yml").exists()
+        assert not (notes / "toc.yml").exists()

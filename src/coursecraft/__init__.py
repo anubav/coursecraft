@@ -12,6 +12,8 @@ from .repo_checks import (
 )
 from .fetch import fetch_notes, branch_exists_on_remote, FetchNotesError
 from .init import init, InitError
+from .instrument import instrument
+from .toc import build_toc, write_toc_yaml, TocError
 
 __all__ = [
     "reflow",
@@ -35,4 +37,8 @@ __all__ = [
     "FetchNotesError",
     "init",
     "InitError",
+    "instrument",
+    "build_toc",
+    "write_toc_yaml",
+    "TocError",
 ]

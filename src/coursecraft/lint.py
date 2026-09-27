@@ -9,7 +9,7 @@ a decision for whoever writes the heading, not something to script.
 
 from dataclasses import dataclass
 
-from .structure import FenceTracker, HEADING_RE, LABEL_RE
+from .structure import find_headings
 
 
 @dataclass
@@ -24,15 +24,8 @@ def find_unlabeled_sections(text: str) -> list[UnlabeledHeading]:
     decorative title inside an lproof-adjacent environment) is not real
     document structure and is correctly never flagged, since it's below
     structural top level."""
-    violations = []
-    tracker = FenceTracker()
-    for i, line in enumerate(text.split('\n')):
-        is_fence = tracker.consume(line)
-        if not is_fence and tracker.at_structural_top_level():
-            m = HEADING_RE.match(line)
-            if m and len(m.group(1)) == 2 and not LABEL_RE.search(line):
-                violations.append(UnlabeledHeading(
-                    line_number=i + 1,
-                    heading_text=m.group(2).strip(),
-                ))
-    return violations
+    return [
+        UnlabeledHeading(line_number=h.line_number, heading_text=h.heading_text)
+        for h in find_headings(text, level=2)
+        if h.label is None
+    ]

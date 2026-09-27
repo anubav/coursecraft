@@ -111,7 +111,7 @@ class TestCourseYamlScaffolding:
     ):
         monkeypatch.chdir(tmp_path)
         init("https://example.com/notes.git")
-        data = yaml.safe_load((tmp_path / "course.yaml").read_text())
+        data = yaml.safe_load((tmp_path / "course.yml").read_text())
         assert data["course"]["notes_repo"] == "https://example.com/notes.git"
         assert data["course"]["title"] == "REPLACE_ME"
         assert data["section"]["start_date"] == "REPLACE_ME"
@@ -121,36 +121,36 @@ class TestCourseYamlScaffolding:
     def test_notes_branch_included_when_given(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         init("https://example.com/notes.git", notes_branch="kevin-custom")
-        data = yaml.safe_load((tmp_path / "course.yaml").read_text())
+        data = yaml.safe_load((tmp_path / "course.yml").read_text())
         assert data["course"]["notes_branch"] == "kevin-custom"
 
     def test_notes_branch_omitted_when_not_given(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         init("https://example.com/notes.git")
-        data = yaml.safe_load((tmp_path / "course.yaml").read_text())
+        data = yaml.safe_load((tmp_path / "course.yml").read_text())
         assert "notes_branch" not in data["course"]
 
     def test_existing_course_yaml_never_overwritten(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         original = "course:\n  title: My Real Course\n  notes_repo: real.git\n"
-        (tmp_path / "course.yaml").write_text(original)
+        (tmp_path / "course.yml").write_text(original)
 
         _, wrote_yaml = init("https://example.com/notes.git")
 
         assert wrote_yaml is False
-        assert (tmp_path / "course.yaml").read_text() == original
+        assert (tmp_path / "course.yml").read_text() == original
 
     def test_course_yaml_not_created_if_course_dir_already_exists(
         self, tmp_path, monkeypatch
     ):
         """Ordering guard: course_dir is checked first, so a failed
         init (course/ already there) must never leave a stray
-        scaffolded course.yaml as a side effect."""
+        scaffolded course.yml as a side effect."""
         monkeypatch.chdir(tmp_path)
         (tmp_path / "course").mkdir()
         with pytest.raises(InitError):
             init("https://example.com/notes.git")
-        assert not (tmp_path / "course.yaml").exists()
+        assert not (tmp_path / "course.yml").exists()
 
     def test_scaffolded_yaml_fails_real_validation_due_to_placeholders(
         self, tmp_path, monkeypatch
@@ -161,4 +161,4 @@ class TestCourseYamlScaffolding:
         monkeypatch.chdir(tmp_path)
         init("https://example.com/notes.git")
         with pytest.raises(ValidationError):
-            CourseConfig.from_yaml(tmp_path / "course.yaml")
+            CourseConfig.from_yaml(tmp_path / "course.yml")

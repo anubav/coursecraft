@@ -8,6 +8,8 @@ ordered-list marker -- without making any formatting decisions itself.
 """
 
 import re
+from dataclasses import dataclass
+from typing import Optional
 
 CODE_FENCE_RE = re.compile(r'^\s*```')
 MATH_FENCE_RE = re.compile(r'^\s*\$\$\s*$')
@@ -150,3 +152,45 @@ def blank_gap_continues_list(lines, j, base_indent):
         m = LIST_ITEM_RE.match(line)
         return bool(m and is_ordered_list_marker(m.group(3)))
     return False
+
+
+@dataclass
+class SectionHeading:
+    line_number: int  # 1-indexed
+    level: int
+    label: Optional[str]
+    # Raw text after the '#'s, whitespace-stripped -- may still
+    # include a trailing {...} attribute block. Deliberately left
+    # raw here (not every caller wants it stripped); see toc.py's
+    # own _clean_title for a caller that does.
+    heading_text: str
+
+
+def find_headings(text: str, level: Optional[int] = None) -> list[SectionHeading]:
+    """Every structural (fence-depth-aware) heading in text -- a
+    decorative '##' title inside a .theorem/.lproof div is correctly
+    never included, since it's below structural top level. Pass
+    level=N to only return headings of that exact level (e.g. 2 for
+    '##'); omit it to get every level. Shared by lint.py (unlabeled
+    '##' headings), instrument.py (labeled '##' headings, plus every
+    level to find section boundaries), and toc.py (both '#' and '##',
+    across a whole notes repo)."""
+    lines = text.split('\n')
+    tracker = FenceTracker()
+    results = []
+    for i, line in enumerate(lines):
+        is_fence = tracker.consume(line)
+        if not is_fence and tracker.at_structural_top_level():
+            m = HEADING_RE.match(line)
+            if m:
+                lvl = len(m.group(1))
+                if level is not None and lvl != level:
+                    continue
+                label_m = LABEL_RE.search(line)
+                results.append(SectionHeading(
+                    line_number=i + 1,
+                    level=lvl,
+                    label=label_m.group(1) if label_m else None,
+                    heading_text=m.group(2).strip(),
+                ))
+    return results

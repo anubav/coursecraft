@@ -18,13 +18,13 @@ Three kinds of repo, with a clean separation of concerns:
   only when needed.
 - **`coursecraft`** (this repo) -- the tool. Portable across any master
   repo that declares a `coursecraft.yml` manifest. Reads a section's
-  `course.yaml` and generates everything section-specific: formatted
+  `course.yml` and generates everything section-specific: formatted
   content, Quarto profiles, homework/exam pages, a syllabus, and
   (eventually) a scheduled, date-gated deployment.
 
 A **section repo** (not yet built) is what actually gets deployed for
 one instance of a course: a clone of the master notes repo, a
-`course.yaml`, and whatever `coursecraft` generates from the two.
+`course.yml`, and whatever `coursecraft` generates from the two.
 
 ## Why the master repo holds no profile logic
 
@@ -106,7 +106,7 @@ Each of these was found by a real bug, not anticipated in advance:
   mid-sentence. The fix glues the offending token onto the end of the
   previous line rather than ever allowing it to start one.
 
-## `course.yaml`: schema as a public API
+## `course.yml`: schema as a public API
 
 The Pydantic model (`coursecraft.schema.CourseConfig`) is the single,
 authoritative definition of a valid section config. This choice was
@@ -134,10 +134,10 @@ directly, not assumed.
 
 The notes-repo manifest gets its own Pydantic model (`NotesManifest`,
 in `manifest.py`, kept separate from `schema.py` since the two describe
-different things -- `course.yaml` is one section's schedule, unique
+different things -- `course.yml` is one section's schedule, unique
 per term; `coursecraft.yml` is the shape of the master content itself,
 the same for every section built from a given notes repo). Same
-motivation as `course.yaml`: without this, a typo'd field name (e.g.
+motivation as `course.yml`: without this, a typo'd field name (e.g.
 `exercize_glob`) would silently be ignored by a plain dict-based
 parser, only surfacing later as a confusing failure deep inside
 label-scanning or instrumentation code.
@@ -256,7 +256,7 @@ start rather than retrofitted after a real access-control question.
   injecting into the Quarto output. Not designed yet, but the schema's
   `due` field is already positioned to support it without rework.
 - **Label-ordering sanity check.** `update`'s human-error checks (do
-  `course.yaml`'s referenced labels/exercises still exist in `notes/`)
+  `course.yml`'s referenced labels/exercises still exist in `notes/`)
   only catch a label that's missing, not one that exists but is out of
   order -- e.g. a `notes_end` typo pointing at content earlier in the
   book than an already-covered lecture. Deferred because it needs real
@@ -292,27 +292,27 @@ the real `logic-notes` remote rather than just asserted.
 
 `fetch-notes` takes no repo URL as an argument -- it reads
 `course.notes_repo` (and optional `course.notes_branch`) from
-`course.yaml` in the current directory, and refuses to run at all if
+`course.yml` in the current directory, and refuses to run at all if
 that file doesn't exist (a short, direct error -- this is a common
 enough mistake that a terse message is more useful than an explanation
 every time). This was originally just "where does the URL come from,"
 but turned out to double as a safeguard against a real mistake: running `fetch-notes` again from *inside* an already-cloned
 `notes/` directory (which structurally can never have its own
-`course.yaml`, since that file lives one level up, in the section
+`course.yml`, since that file lives one level up, in the section
 folder) now fails immediately and clearly instead of silently cloning
 a nested `notes/notes/`. Confirmed by reproducing the exact failure
 against the real repo before and after the fix.
 
-`fetch-notes` validates only the `course:` block of `course.yaml`
+`fetch-notes` validates only the `course:` block of `course.yml`
 (`CourseConfig.load_course_info`), not the whole file. This matters
-because `fetch-notes` runs *before* the intended course.yaml-filling
+because `fetch-notes` runs *before* the intended course.yml-filling
 wizard, right after `init` has scaffolded every other required field
 as a literal `REPLACE_ME` -- a full `CourseConfig.from_yaml` validation
 at this point would always fail on the placeholder dates, blocking
 exactly the workflow `init` -> `fetch-notes` -> wizard -> `update` was
 designed to support. Confirmed as a real bug, not a hypothetical: the
 original implementation genuinely failed against a freshly-`init`'d
-`course.yaml` before this fix, and genuinely succeeds after it. Full
+`course.yml` before this fix, and genuinely succeeds after it. Full
 validation of the whole file (`coursecraft validate`) remains exactly
 as strict as before -- only `fetch-notes`'s own narrower need changed.
 
@@ -332,9 +332,9 @@ fail for reasons outside your control), while `fetch-notes` depends on
 the network and produces a real external side effect (a pushed
 branch). Merging them would mean a failed clone leaves an ambiguous
 half-done command -- ordering also matters for a different reason:
-`fetch-notes` now requires `course.yaml` to already exist, so `init`
+`fetch-notes` now requires `course.yml` to already exist, so `init`
 has to run first regardless. `build` composes both (plus the future
-`course.yaml`-filling wizard, `update`, and `deploy`) for the "just do
+`course.yml`-filling wizard, `update`, and `deploy`) for the "just do
 everything" experience neither individual command should try to be.
 
 `init` creates two independent things, with deliberately different
@@ -343,9 +343,9 @@ everything" experience neither individual command should try to be.
 - **`./course/`** -- a fresh git repo, checked *first*. Already
   existing is a hard error, same "error if already done" philosophy
   as `fetch-notes`'s own guards. Checking this before touching
-  `course.yaml` at all means a failed `init` never leaves a stray
+  `course.yml` at all means a failed `init` never leaves a stray
   scaffolded file behind as a side effect.
-- **`./course.yaml`** -- if missing, scaffolded with a real
+- **`./course.yml`** -- if missing, scaffolded with a real
   `notes_repo` (required as a CLI argument, not a placeholder --
   unlike every other required field, `notes_repo` has no format
   validation in the schema, so a placeholder here would silently pass
@@ -355,7 +355,7 @@ everything" experience neither individual command should try to be.
   literal string `REPLACE_ME` -- deliberately, for the date fields
   especially, since that fails `coursecraft validate` loudly (bad date
   format) rather than a fake-but-parseable date sailing through
-  unnoticed. If `course.yaml` already exists, it's left completely
+  unnoticed. If `course.yml` already exists, it's left completely
   untouched -- never overwritten, even partially, even if fields
   passed as CLI arguments (like `notes_branch`) differ from what's
   already there.
@@ -420,6 +420,131 @@ the real `logic-notes` repo, matching every prior verification's
 degree of skepticism rather than trusting the refactor because it
 looked right on paper.
 
+## `instrument.py`: wraps sections, nothing else, and is course.yml-independent
+
+`instrument()` wraps every labeled `##` heading (in a chapter or
+appendix -- exercises/inserts are never touched, since they have no
+independent visibility of their own) in a flat
+`:::{.content-hidden unless-meta="sections.<label>"}` div. Deliberately
+**every** labeled section, not just ones some lecture names as its own
+`notes_end`: a lecture's cumulative frontier can pass through a
+section no lecture ever explicitly names (lecture 1 ends at section C,
+lecture 2 ends at section E -- section D becomes visible with lecture
+2 even though nothing names D itself), so instrumentation has to give
+every section a `sections.*` hook regardless of whether `course.yml`
+mentions it. This is what makes `instrument()` a pure function of the
+notes content alone, with **no dependency on `course.yml` at all** --
+the metadata *values* (which hooks are true for a given profile) are
+decided later, during profile generation.
+
+This is a straightforward reuse of `structure.py`'s fence-aware
+heading detection (a decorative `##` title inside a `.theorem`/
+`.lproof` div is correctly never mistaken for a real section
+boundary), not new parsing logic -- the only new part is the actual
+wrapping. Verified against real content, not just the synthetic unit
+tests: instrumented the real `logic-notes` Chapter 1, rendered it with
+every `sections.*` key set `true`, and confirmed **100% text
+similarity** against the uninstrumented original -- instrumentation
+changes nothing when everything is revealed. Separately, set some
+keys `false` and confirmed with the same "grep the rendered HTML for
+section-unique text" method used throughout this project that hiding
+is real content removal, not CSS: hidden sections are genuinely absent
+from the output. Also ran `instrument()` against the two real chapters
+containing decorative theorem-title headings (`## Transitivity`, `##
+Transmission`, both nested inside `.theorem` divs) and confirmed the
+wrap count matches exactly the number of real labeled sections in each
+-- the decorative headings weren't mistaken for section boundaries on
+real content, not just in the hand-built test case.
+
+## `.yml`, not `.yaml`
+
+`course.yml`, `coursecraft.yml`, and (eventually) `toc.yml`/`site.yml`
+all use the `.yml` extension, even though earlier drafts of this
+project used `course.yaml`. The rename was purely a matter of which
+direction was cheaper, not a strong opinion about the extension
+itself: `coursecraft.yml` was already a live, committed file in the
+real `logic-notes` repo on GitHub by the time this was noticed, while
+`course.yaml` had only ever existed in test fixtures and sandbox
+scaffolds -- so standardizing on `.yml` meant renaming a string
+literal in this codebase, not migrating a file that already exists in
+the wild.
+
+## `structure.find_headings`: extracted before a fourth copy, not after
+
+`lint.py` and `instrument.py` each had their own copy of the same
+fence-aware heading scan. Rather than write a third copy for `toc.py`
+(which needs the identical scan, just applied across a whole notes
+repo instead of one file), the scan itself moved into `structure.py`
+as `find_headings()`, returning every heading (optionally filtered by
+level) with its line number, label (if any), and raw heading text.
+`lint.find_unlabeled_sections` and `instrument.instrument` both became
+thin filters over it -- confirmed behavior-preserving by running the
+full suite unchanged immediately after the refactor, before writing
+anything new on top of it. This is the same "extract now, before it
+triples" reasoning as `_gitutil.py`, just one module earlier in the
+chain than that one caught it.
+
+## `toc.py`: ordered by `_quarto.yml`, not lexical filename order
+
+`coursecraft toc` builds `./toc.yml` from `./notes` -- every chapter
+and appendix, in the order declared by `notes/_quarto.yml`'s own
+`book: chapters:`/`appendices:` list, each with its labeled `##`
+sections in document order. Deliberately **not** lexical filename
+order: that would impose a numbering convention on every notes repo
+that adopts `coursecraft`, and would silently mis-order the moment
+padding is inconsistent (`1-foo.qmd` sorting before `10-bar.qmd`).
+`_quarto.yml`'s list is a signal the notes repo's author already has
+to get right for an unrelated reason -- it's what `quarto preview`
+itself uses -- so this reuses it rather than asking for a second,
+redundant one. Confirmed with a test fixture built specifically so
+lexical order would give the *wrong* answer (files named `zebra.qmd`/
+`apple.qmd` but declared in the opposite order), and separately
+against the real `logic-notes` repo, where the output matched every
+real chapter/section title and label exactly -- including the
+`sec-induction-proof-by-induction` rename from much earlier in this
+project, confirming this reflects the repo's current real state, not
+a stale assumption.
+
+Takes **no arguments at all** -- always `./notes`, erroring
+(`toc failed: 'notes' not found.`) if it doesn't exist. This was a
+deliberate correction: an earlier draft gave it an optional repo-root
+argument by analogy with `validate-notes`, but `validate-notes` has a
+genuine standalone use case (running against any notes repo during
+development) that `toc` doesn't share -- its only purpose is helping
+populate *this* section's `course.yml`, which only makes sense inside
+a section folder. An optional argument would have reopened exactly the
+"ran a command against the wrong directory with no signal anything
+was off" footgun `fetch-notes`'s own required-`course.yml` check was
+built to close.
+
+An entry in `_quarto.yml`'s list that doesn't match the manifest's
+`chapter_glob`/`appendix_dir_glob` (a front-matter `index.qmd`, most
+commonly) is silently excluded, cross-referencing the two signals
+(order from `_quarto.yml`, membership from `coursecraft.yml`'s globs)
+rather than hardcoding "skip index.qmd" as a special case.
+
+`toc.yml` is written beside `course.yml`, never inside `notes/` --
+`notes/` is a git clone that gets pushed back to the master repo via
+sync-back, and a stray generated file there could get committed and
+pushed upstream by accident. Unlike `course.yml`, it always
+overwrites: it's 100% derived from `notes/`, so there's nothing to
+protect, and rerunning it after editing `notes/` should just produce
+a fresh, correct file every time. `update` will call the same
+`build_toc()`/`write_toc_yaml()` functions as a side effect of its own
+label-position validation (the D check), so `toc.yml` stays fresh
+automatically on every `update` run without `update` needing to read
+it back as a dependency -- `coursecraft toc` remains useful standalone
+for the one moment that matters between `update` runs: refreshing the
+outline right before reopening the wizard mid-term to add a new
+lecture referencing newly-written content.
+
+Only a flat `book: chapters:`/`appendices:` list is supported for
+now -- a `part:` grouping raises a clear error rather than silently
+mis-ordering or crashing. `logic-notes`'s own `_quarto.yml` is flat
+today, so this doesn't bite yet, but a portable tool should handle
+the nested case eventually rather than assume every adopting notes
+repo stays flat forever.
+
 ## Package structure
 
 ```
@@ -429,12 +554,17 @@ src/coursecraft/
                     # validation decisions
 ├── reflow.py       # the formatting engine, built on structure.py
 ├── lint.py         # missing-label detection (report only)
-├── schema.py       # course.yaml: Pydantic models + validation
+├── schema.py       # course.yml: Pydantic models + validation
 ├── manifest.py     # coursecraft.yml: Pydantic model + validation
 ├── repo_checks.py  # checks a real notes repo's content against its manifest
 ├── _gitutil.py     # shared subprocess-running helpers for git ops
 ├── fetch.py        # fetch-notes: clone onto a section/<name> branch
-├── init.py         # init: scaffold course/ + a placeholder course.yaml
+├── init.py         # init: scaffold course/ + a placeholder course.yml
+├── instrument.py   # wraps ## sections in content-hidden divs for
+                      # profile generation to control visibility later
+├── toc.py          # builds toc.yml from ./notes, ordered by
+                      # notes/_quarto.yml
+                      # profile generation to control visibility later
 └── cli.py          # thin argparse wrapper: reflow / lint / validate /
                       # validate-notes / fetch-notes / init
 ```

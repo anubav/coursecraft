@@ -3,7 +3,7 @@ coursecraft init.
 
 Creates ./course/ -- a fresh git repo that `update` will regenerate
 content into on every run, never hand-edited -- and, if one doesn't
-already exist, a placeholder ./course.yaml alongside it with a real
+already exist, a placeholder ./course.yml alongside it with a real
 notes_repo but every other required field set to REPLACE_ME, so
 `coursecraft validate` fails loudly until they're actually filled in.
 
@@ -67,7 +67,7 @@ def _run(cmd: list[str], env: Optional[dict] = None):
 def _scaffold_course_yaml(
     path: Path, notes_repo: str, notes_branch: Optional[str]
 ) -> bool:
-    """Write a placeholder course.yaml if one doesn't already exist.
+    """Write a placeholder course.yml if one doesn't already exist.
     Returns True if a file was written, False if one already existed
     (left completely untouched either way -- never overwritten)."""
     if path.exists():
@@ -103,10 +103,10 @@ def init(
     notes_repo: str,
     notes_branch: Optional[str] = None,
     course_dir: str = "course",
-    course_yaml_path: str = "course.yaml",
+    course_yaml_path: str = "course.yml",
 ) -> tuple[Path, bool]:
     """Create course_dir (a fresh, protected git repo) and, if
-    missing, a placeholder course.yaml alongside it. Raises InitError
+    missing, a placeholder course.yml alongside it. Raises InitError
     if course_dir already exists -- checked first, before
     course_yaml_path is touched at all, so a failed init never leaves
     a stray scaffolded file as a side effect."""

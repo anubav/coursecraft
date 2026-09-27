@@ -1,8 +1,8 @@
 """
-course.yaml schema.
+course.yml schema.
 
 This is the single, authoritative definition of what a valid
-course.yaml looks like -- anything that produces or consumes one
+course.yml looks like -- anything that produces or consumes one
 (the CLI today, a future web UI eventually) should import CourseConfig
 from here rather than re-implementing validation.
 """
@@ -118,7 +118,7 @@ class _CourseSectionOnly(BaseModel):
     just the `course:` block. Extra top-level keys (section/lectures/
     assignments) are silently ignored, not errors: neither CourseInfo
     nor this wrapper sets extra="forbid", so validating this smaller
-    model against a full course.yaml dict only checks what it
+    model against a full course.yml dict only checks what it
     declares and never touches the rest."""
     course: CourseInfo
 
@@ -183,9 +183,9 @@ class CourseConfig(BaseModel):
         (title/notes_repo/notes_branch/solutions_repo), ignoring
         section/lectures/assignments entirely -- because they're
         allowed not to exist yet. fetch-notes needs to know where the
-        notes repo is, and runs before the rest of course.yaml is
+        notes repo is, and runs before the rest of course.yml is
         necessarily filled in (right after `init` scaffolds it with
-        REPLACE_ME everywhere else, before the course.yaml-filling
+        REPLACE_ME everywhere else, before the course.yml-filling
         wizard has had a chance to run)."""
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
         return _CourseSectionOnly.model_validate(raw).course
