@@ -9,6 +9,7 @@ from coursecraft.repo_checks import (
     check_duplicate_labels,
     check_dangling_includes,
     check_chapter_headings,
+    check_exercise_labels,
     run_all_checks,
 )
 
@@ -216,6 +217,112 @@ class TestChapterHeadings:
         assert len(problems) == 1
         assert "no {#sec-...} label" in problems[0]
         assert "a.qmd" in problems[0]
+
+
+class TestCheckExerciseLabels:
+    def test_properly_labeled_exercise_reports_nothing(self, base_manifest, tmp_path):
+        _make_minimal_repo(
+            tmp_path,
+            chapter_text=(
+                "# Chapter One {#sec-one .chapter}\n\n"
+                ":::: {#exr-e}\n"
+                "{{< include /exercises/e.qmd >}}\n"
+                "::::\n"
+            ),
+        )
+        manifest = NotesManifest.model_validate(base_manifest)
+        assert check_exercise_labels(manifest, tmp_path) == []
+
+    def test_exercise_with_extra_class_reports_nothing(self, base_manifest, tmp_path):
+        """:::{#exr-e .exercise} is valid -- extra classes should not block the check."""
+        _make_minimal_repo(
+            tmp_path,
+            chapter_text=(
+                "# Chapter One {#sec-one .chapter}\n\n"
+                "::::{#exr-e .exercise}\n"
+                "{{< include /exercises/e.qmd >}}\n"
+                "::::\n"
+            ),
+        )
+        manifest = NotesManifest.model_validate(base_manifest)
+        assert check_exercise_labels(manifest, tmp_path) == []
+
+    def test_exercise_not_in_any_div_reported(self, base_manifest, tmp_path):
+        _make_minimal_repo(
+            tmp_path,
+            chapter_text=(
+                "# Chapter One {#sec-one .chapter}\n\n"
+                "{{< include /exercises/e.qmd >}}\n"
+            ),
+        )
+        manifest = NotesManifest.model_validate(base_manifest)
+        problems = check_exercise_labels(manifest, tmp_path)
+        assert len(problems) == 1
+        assert "e.qmd" in problems[0]
+        assert "#exr-e" in problems[0]
+
+    def test_exercise_in_wrong_exr_div_reported(self, base_manifest, tmp_path):
+        """Include for 'e.qmd' wrapped in '#exr-other' -- label mismatch."""
+        _make_minimal_repo(
+            tmp_path,
+            chapter_text=(
+                "# Chapter One {#sec-one .chapter}\n\n"
+                "::::{#exr-other}\n"
+                "{{< include /exercises/e.qmd >}}\n"
+                "::::\n"
+            ),
+        )
+        manifest = NotesManifest.model_validate(base_manifest)
+        problems = check_exercise_labels(manifest, tmp_path)
+        assert len(problems) == 1
+        assert "e.qmd" in problems[0]
+
+    def test_exercise_in_non_exr_div_reported(self, base_manifest, tmp_path):
+        """Inside a .theorem div with no #exr- label -- must be flagged."""
+        _make_minimal_repo(
+            tmp_path,
+            chapter_text=(
+                "# Chapter One {#sec-one .chapter}\n\n"
+                ":::{.theorem}\n"
+                "{{< include /exercises/e.qmd >}}\n"
+                ":::\n"
+            ),
+        )
+        manifest = NotesManifest.model_validate(base_manifest)
+        problems = check_exercise_labels(manifest, tmp_path)
+        assert len(problems) == 1
+
+    def test_exercise_in_appendix_also_checked(self, base_manifest, tmp_path):
+        _make_minimal_repo(
+            tmp_path,
+            appendix_text=(
+                "# Appendix A {#sec-a}\n\n"
+                "{{< include /exercises/e.qmd >}}\n"
+            ),
+        )
+        manifest = NotesManifest.model_validate(base_manifest)
+        problems = check_exercise_labels(manifest, tmp_path)
+        assert len(problems) == 1
+        assert "a.qmd" in problems[0]
+
+    def test_exercise_include_inside_code_fence_not_flagged(self, base_manifest, tmp_path):
+        """An include shown as an example inside a code block is not a real include."""
+        _make_minimal_repo(
+            tmp_path,
+            chapter_text=(
+                "# Chapter One {#sec-one .chapter}\n\n"
+                "```\n"
+                "{{< include /exercises/e.qmd >}}\n"
+                "```\n"
+            ),
+        )
+        manifest = NotesManifest.model_validate(base_manifest)
+        assert check_exercise_labels(manifest, tmp_path) == []
+
+    def test_chapter_with_no_exercise_includes_reports_nothing(self, base_manifest, tmp_path):
+        _make_minimal_repo(tmp_path)
+        manifest = NotesManifest.model_validate(base_manifest)
+        assert check_exercise_labels(manifest, tmp_path) == []
 
 
 class TestRunAllChecks:

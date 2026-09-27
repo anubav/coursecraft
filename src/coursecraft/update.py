@@ -1,10 +1,7 @@
 """
-coursecraft update -- steps 1-5.
+coursecraft update -- all ten steps.
 
-Steps 6 (generate profiles), 7 (generate syllabus), 8 (lock course/),
-and 9 (commit course/) are not yet implemented.
-
-The nine-step flow:
+The ten-step flow:
   1. Build toc by scanning notes/ directly (never reads toc.yml off disk)
   2. Write toc.yml as a side effect of step 1
   3. Validate course.yml against notes/ (A/B/C/D) -- abort if invalid,
@@ -13,11 +10,14 @@ The nine-step flow:
      no-op on first update since files are already writable)
   5. Copy notes/ -> course/, instrumenting chapter/appendix .qmd files
      in-flight; everything else copied verbatim
-  6. Generate profiles                                    [TODO]
-  7. Generate syllabus (course/index.qmd)                [TODO]
-  8. Lock course/ (chmod 0o444 -- local safeguard against hand-editing;
+  5b. Strip chapters/appendices from base _quarto.yml so profiles own
+     the chapter list
+  6. Generate hw-NN.qmd / exam-NN.qmd (and *-solutions.qmd) in course/
+  7. Generate Quarto profile YAMLs (_quarto-<date>.yml) in course/
+  8. Generate syllabus (course/index.qmd)
+  9. Lock course/ (chmod 0o444 -- local safeguard against hand-editing;
      does not survive a git clone, so it doesn't affect CI)
-  9. Commit course/                                       [TODO]
+ 10. Commit course/
 """
 
 import os
@@ -26,17 +26,49 @@ import shutil
 from pathlib import Path
 from typing import Union
 
+import yaml
 from pydantic import ValidationError
 
+from ._gitutil import run_git, GitCommandError, coursecraft_env
 from .course_checks import run_course_checks
+from .hw import generate_homework_files
 from .instrument import instrument
 from .manifest import NotesManifest
+from .profiles import generate_profiles
 from .schema import CourseConfig
+from .syllabus import generate_syllabus
 from .toc import build_toc, write_toc_yaml, TocError
 
 
 class UpdateError(Exception):
     pass
+
+
+def _git(cmd: list[str], env: dict | None = None) -> None:
+    try:
+        run_git(cmd, env=env)
+    except GitCommandError as e:
+        raise UpdateError(str(e)) from e
+
+
+def _commit_course(course_path: Path) -> None:
+    """Stage all changes in course/ and commit if anything is staged.
+
+    Uses coursecraft_env() so the pre-commit hook (which guards against
+    hand-editing) allows the commit through. Skips the commit entirely
+    when notes and course.yml haven't changed since the last run."""
+    env = coursecraft_env()
+    _git(["git", "-C", str(course_path), "add", "-A"], env=env)
+    try:
+        # exit 0 → nothing staged; exit 1 → staged changes exist
+        run_git(["git", "-C", str(course_path), "diff", "--cached", "--quiet"])
+        return  # nothing to commit
+    except GitCommandError:
+        pass
+    _git(
+        ["git", "-C", str(course_path), "commit", "-m", "coursecraft update"],
+        env=env,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +143,24 @@ def lock_course(course_path: Path) -> None:
 # Copy + instrument (step 5)
 # ---------------------------------------------------------------------------
 
+def _strip_quarto_chapter_lists(course_path: Path) -> None:
+    """Strip all chapters (except index.qmd) and appendices from the
+    _quarto.yml that was just copied into course/. This leaves only
+    index.qmd in chapters and removes appendices entirely, so that each
+    generated profile can append exactly the chapters/appendices that
+    have visible content for that date."""
+    quarto_yml = course_path / "_quarto.yml"
+    if not quarto_yml.exists():
+        return
+    data = yaml.safe_load(quarto_yml.read_text(encoding="utf-8")) or {}
+    book = data.setdefault("book", {})
+    book["chapters"] = ["index.qmd"]
+    book.pop("appendices", None)
+    quarto_yml.write_text(
+        yaml.dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+
+
 def _copy_notes(notes_root: Path, course_path: Path, manifest: NotesManifest) -> None:
     """Copy notes_root -> course_path.
 
@@ -163,7 +213,7 @@ def update(
     course_yaml: Union[str, Path] = "course.yml",
     toc_out: Union[str, Path] = "toc.yml",
 ) -> None:
-    """Run update steps 1-5 (profiles, syllabus, lock, commit: TODO).
+    """Run all ten update steps.
 
     Raises UpdateError for any condition that should abort the run --
     missing directories, invalid course.yml, failed validation checks.
@@ -209,5 +259,27 @@ def update(
     # The manifest was already loaded by build_toc (step 1); we load it
     # again here rather than thread it through the call chain, since it's
     # a tiny file and the double read is cheaper than a refactor.
-    manifest = NotesManifest.from_yaml(notes_root / "coursecraft.yml")
+    try:
+        manifest = NotesManifest.from_yaml(notes_root / "coursecraft.yml")
+    except (FileNotFoundError, ValidationError) as e:
+        raise UpdateError(f"could not load notes manifest: {e}") from e
     _copy_notes(notes_root, course_path, manifest)
+
+    # Step 5b: strip chapters/appendices from base _quarto.yml so profiles
+    # can set them per-date without duplicating what's already in the base.
+    _strip_quarto_chapter_lists(course_path)
+
+    # Step 6: generate homework / exam files
+    generate_homework_files(config, course_path, manifest.conventions.macros_include)
+
+    # Step 7: generate Quarto profile YAMLs (_quarto-<date>.yml)
+    generate_profiles(config, toc_data, course_path)
+
+    # Step 8: generate syllabus (course/index.qmd)
+    generate_syllabus(config, toc_data, course_path)
+
+    # Step 9: lock course/ (local safeguard against accidental hand-editing)
+    lock_course(course_path)
+
+    # Step 10: commit course/
+    _commit_course(course_path)

@@ -156,12 +156,27 @@ def _cmd_fetch_notes(args) -> int:
     print(f'Cloned {course_info.notes_repo}{src_note} -> {target} '
           f'on branch {branch!r} (pushed)')
 
+    hooks_active = (target / ".git" / "hooks" / "pre-commit").exists()
+    if (target / ".pre-commit-config.yaml").exists():
+        if hooks_active:
+            print('pre-commit hooks installed.')
+        else:
+            print(
+                'Warning: pre-commit hooks not installed. '
+                f"Run 'pre-commit install' in {target}/ to enable them."
+            )
+
     manifest_path = target / 'coursecraft.yml'
     if not manifest_path.exists():
         print(f'{manifest_path}: not found -- skipping validate-notes')
         return 0
 
-    manifest = NotesManifest.from_yaml(manifest_path)
+    try:
+        manifest = NotesManifest.from_yaml(manifest_path)
+    except ValidationError as e:
+        print(f'{manifest_path}: INVALID\n')
+        print(e)
+        return 1
     results = run_all_checks(manifest, target)
     any_problems = any(results.values())
     if any_problems:

@@ -21,38 +21,7 @@ from pathlib import Path
 from typing import Union
 
 from .schema import CourseConfig
-
-
-def _all_toc_labels(toc_data: dict) -> set[str]:
-    """Flat set of all labels appearing in toc_data (chapter labels and
-    section labels, across chapters and appendices)."""
-    labels: set[str] = set()
-    for group in (toc_data.get("chapters", []), toc_data.get("appendices", [])):
-        for chapter in group:
-            if chapter.get("label"):
-                labels.add(chapter["label"])
-            for sec in chapter.get("sections", []):
-                if sec.get("label"):
-                    labels.add(sec["label"])
-    return labels
-
-
-def _label_positions(toc_data: dict) -> dict[str, int]:
-    """Map every label in toc_data to its sequential position across the
-    entire document tree (chapters first, then appendices; within each
-    chapter, the chapter's own label before its sections)."""
-    positions: dict[str, int] = {}
-    pos = 0
-    for group in (toc_data.get("chapters", []), toc_data.get("appendices", [])):
-        for chapter in group:
-            if chapter.get("label"):
-                positions[chapter["label"]] = pos
-                pos += 1
-            for sec in chapter.get("sections", []):
-                if sec.get("label"):
-                    positions[sec["label"]] = pos
-                    pos += 1
-    return positions
+from .toc import label_positions
 
 
 def check_labels_exist(config: CourseConfig, toc_data: dict) -> list[str]:
@@ -61,7 +30,7 @@ def check_labels_exist(config: CourseConfig, toc_data: dict) -> list[str]:
     Failure mode without this check: the frontier simply doesn't advance,
     and the instructor finds out when a student asks why new material
     isn't showing."""
-    known = _all_toc_labels(toc_data)
+    known = set(label_positions(toc_data).keys())
     problems = []
     for i, lec in enumerate(config.lectures):
         name = config.lecture_name(i)
@@ -123,7 +92,7 @@ def check_label_ordering(config: CourseConfig, toc_data: dict) -> list[str]:
     just the wrong one). Lectures whose notes_end isn't found in toc_data are
     skipped (check A already covers that case) without resetting the frontier,
     so subsequent lectures are still compared against the last valid position."""
-    positions = _label_positions(toc_data)
+    positions = label_positions(toc_data)
     problems = []
     prev_pos = -1
     prev_name: str | None = None
@@ -139,9 +108,8 @@ def check_label_ordering(config: CourseConfig, toc_data: dict) -> list[str]:
                 f"{name}: notes_end {end_label!r} (position {end_pos}) is before "
                 f"{prev_name}'s notes_end (position {prev_pos})"
             )
-        else:
-            prev_pos = end_pos
-            prev_name = name
+        prev_pos = end_pos
+        prev_name = name
 
     return problems
 

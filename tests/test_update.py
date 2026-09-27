@@ -1,7 +1,6 @@
-"""Tests for update.py steps 1-5.
+"""Tests for coursecraft update (all ten steps).
 
-Steps 6 (profiles), 7 (syllabus), 8 (lock), and 9 (commit) are not
-implemented yet, so they're not tested here. What IS tested:
+What IS tested:
 
 - Precondition guards (missing notes/, missing course/)
 - toc.yml written as a side effect of step 1-2
@@ -11,11 +10,12 @@ implemented yet, so they're not tested here. What IS tested:
 - _is_excluded: exclusion rules for the copy step
 - _copy_notes: chapter files are instrumented, others verbatim,
   excluded filenames/dirs are skipped
-- Full integration: update() happy path
+- Full integration: update() happy path including lock and commit
 """
 
 import os
 import stat
+import subprocess
 
 import pytest
 import yaml
@@ -24,10 +24,12 @@ from coursecraft.update import (
     UpdateError,
     _is_excluded,
     _copy_notes,
+    _strip_quarto_chapter_lists,
     unlock_course,
     lock_course,
     update,
 )
+from coursecraft._gitutil import coursecraft_env
 from coursecraft.manifest import NotesManifest
 from pathlib import Path
 
@@ -101,10 +103,18 @@ VALID_COURSE = {
 
 
 def _make_course(root: Path) -> None:
-    """Minimal course/ directory (like what init creates, minus the git repo)."""
+    """Minimal course/ directory with a real git repo (like what init creates)."""
     root.mkdir(exist_ok=True)
     (root / "README.md").write_text("Generated.\n")
     (root / ".gitignore").write_text("_book/\n_site/\n.quarto/\n")
+    (root / "index.qmd").write_text("# Syllabus {.unnumbered}\n")
+    env = coursecraft_env()
+    subprocess.run(["git", "init", "-b", "main", str(root)], capture_output=True, check=True)
+    subprocess.run(["git", "-C", str(root), "add", "-A"], capture_output=True, env=env, check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "commit", "-m", "Initial commit"],
+        capture_output=True, env=env, check=True,
+    )
 
 
 def _setup(tmp_path: Path):
@@ -216,6 +226,43 @@ class TestChmodHelpers:
 # ---------------------------------------------------------------------------
 # _copy_notes
 # ---------------------------------------------------------------------------
+
+class TestStripQuartoChapterLists:
+    def test_strips_chapters_to_index_only(self, tmp_path):
+        (tmp_path / "_quarto.yml").write_text(yaml.dump({
+            "book": {"chapters": ["index.qmd", "chapters/ch1.qmd", "chapters/ch2.qmd"]}
+        }))
+        _strip_quarto_chapter_lists(tmp_path)
+        data = yaml.safe_load((tmp_path / "_quarto.yml").read_text())
+        assert data["book"]["chapters"] == ["index.qmd"]
+
+    def test_strips_appendices(self, tmp_path):
+        (tmp_path / "_quarto.yml").write_text(yaml.dump({
+            "book": {
+                "chapters": ["index.qmd"],
+                "appendices": ["appendices/app-a.qmd"],
+            }
+        }))
+        _strip_quarto_chapter_lists(tmp_path)
+        data = yaml.safe_load((tmp_path / "_quarto.yml").read_text())
+        assert "appendices" not in data["book"]
+
+    def test_preserves_other_book_fields(self, tmp_path):
+        (tmp_path / "_quarto.yml").write_text(yaml.dump({
+            "book": {
+                "title": "My Book",
+                "author": "Jane Smith",
+                "chapters": ["index.qmd", "chapters/ch1.qmd"],
+            }
+        }))
+        _strip_quarto_chapter_lists(tmp_path)
+        data = yaml.safe_load((tmp_path / "_quarto.yml").read_text())
+        assert data["book"]["title"] == "My Book"
+        assert data["book"]["author"] == "Jane Smith"
+
+    def test_noop_when_no_quarto_yml(self, tmp_path):
+        _strip_quarto_chapter_lists(tmp_path)   # no file -- must not raise
+
 
 class TestCopyNotes:
     def _manifest(self, root: Path) -> NotesManifest:
@@ -487,14 +534,30 @@ class TestUpdate:
 
         assert (course / "_quarto.yml").exists()
 
-    def test_index_qmd_not_copied_to_course(self, tmp_path):
+    def test_quarto_yml_chapters_stripped_to_index(self, tmp_path):
+        """update() must strip all chapters (except index.qmd) and all
+        appendices from the base _quarto.yml so profiles can own the list."""
         notes, course, cy = _setup(tmp_path)
-        (notes / "index.qmd").write_text("# Preface\n")
 
         update(notes_dir=notes, course_dir=course,
                course_yaml=cy, toc_out=tmp_path / "toc.yml")
 
-        assert not (course / "index.qmd").exists()
+        data = yaml.safe_load((course / "_quarto.yml").read_text())
+        assert data["book"]["chapters"] == ["index.qmd"]
+        assert "appendices" not in data.get("book", {})
+
+    def test_notes_index_qmd_not_copied_to_course(self, tmp_path):
+        """The notes repo's index.qmd must not be copied into course/ --
+        the syllabus generator (step 8) writes its own index.qmd instead."""
+        notes, course, cy = _setup(tmp_path)
+        (notes / "index.qmd").write_text("# Preface from notes repo\n")
+
+        update(notes_dir=notes, course_dir=course,
+               course_yaml=cy, toc_out=tmp_path / "toc.yml")
+
+        content = (course / "index.qmd").read_text()
+        assert "Preface from notes repo" not in content
+        assert "Syllabus" in content   # generated by step 8
 
     def test_excluded_metadata_not_in_course(self, tmp_path):
         notes, course, cy = _setup(tmp_path)
@@ -567,6 +630,66 @@ class TestUpdate:
         # instrumented in course/ even though course.yml doesn't reference it
         copied = (course / "chapters" / "ch1.qmd").read_text()
         assert 'unless-meta="sections.sec-ch1-new"' in copied
+
+    def test_course_files_locked_after_update(self, tmp_path):
+        """Step 9: all files in course/ must be read-only after update."""
+        notes, course, cy = _setup(tmp_path)
+        update(notes_dir=notes, course_dir=course,
+               course_yaml=cy, toc_out=tmp_path / "toc.yml")
+        ch1 = course / "chapters" / "ch1.qmd"
+        assert not os.access(ch1, os.W_OK)
+
+    def test_update_creates_a_commit(self, tmp_path):
+        """Step 10: update() must create a new commit in course/."""
+        notes, course, cy = _setup(tmp_path)
+        result = subprocess.run(
+            ["git", "-C", str(course), "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True,
+        )
+        commits_before = int(result.stdout.strip())
+
+        update(notes_dir=notes, course_dir=course,
+               course_yaml=cy, toc_out=tmp_path / "toc.yml")
+
+        result = subprocess.run(
+            ["git", "-C", str(course), "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True,
+        )
+        commits_after = int(result.stdout.strip())
+        assert commits_after == commits_before + 1
+
+    def test_commit_message_is_coursecraft_update(self, tmp_path):
+        notes, course, cy = _setup(tmp_path)
+        update(notes_dir=notes, course_dir=course,
+               course_yaml=cy, toc_out=tmp_path / "toc.yml")
+        result = subprocess.run(
+            ["git", "-C", str(course), "log", "-1", "--format=%s"],
+            capture_output=True, text=True,
+        )
+        assert result.stdout.strip() == "coursecraft update"
+
+    def test_second_update_unchanged_notes_skips_new_commit(self, tmp_path):
+        """If notes and course.yml are unchanged, the second update must not
+        create an additional commit (nothing new to commit)."""
+        notes, course, cy = _setup(tmp_path)
+        toc_out = tmp_path / "toc.yml"
+        update(notes_dir=notes, course_dir=course,
+               course_yaml=cy, toc_out=toc_out)
+
+        result = subprocess.run(
+            ["git", "-C", str(course), "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True,
+        )
+        commits_after_first = int(result.stdout.strip())
+
+        update(notes_dir=notes, course_dir=course,
+               course_yaml=cy, toc_out=toc_out)
+
+        result = subprocess.run(
+            ["git", "-C", str(course), "rev-list", "--count", "HEAD"],
+            capture_output=True, text=True,
+        )
+        assert int(result.stdout.strip()) == commits_after_first
 
     def test_renaming_label_in_notes_fails_check_a_on_rerun(self, tmp_path):
         """If a label referenced in course.yml is renamed in notes/, the

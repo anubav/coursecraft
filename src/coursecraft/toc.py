@@ -116,3 +116,23 @@ def build_toc(notes_root: Union[str, Path]) -> dict:
 
 def write_toc_yaml(toc_data: dict, path: Union[str, Path] = "toc.yml") -> None:
     Path(path).write_text(yaml.dump(toc_data, sort_keys=False), encoding="utf-8")
+
+
+
+def label_positions(toc_data: dict) -> dict[str, int]:
+    """Map every label in toc_data to its sequential position across the
+    entire document tree (chapters then appendices; within each chapter,
+    the chapter label before its sections). Used by both validation checks
+    and profile generation to compare label positions."""
+    positions: dict[str, int] = {}
+    pos = 0
+    for group in (toc_data.get("chapters", []), toc_data.get("appendices", [])):
+        for chapter in group:
+            if chapter.get("label"):
+                positions[chapter["label"]] = pos
+                pos += 1
+            for sec in chapter.get("sections", []):
+                if sec.get("label"):
+                    positions[sec["label"]] = pos
+                    pos += 1
+    return positions

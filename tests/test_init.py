@@ -41,6 +41,12 @@ class TestCourseDirCreation:
         assert (course_path / "README.md").exists()
         assert "_book" in (course_path / ".gitignore").read_text()
 
+    def test_index_qmd_placeholder_created(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        course_path, _ = init("https://example.com/notes.git")
+        assert (course_path / "index.qmd").exists()
+        assert (course_path / "index.qmd").read_text().strip() != ""
+
     def test_refuses_existing_course_dir(self, tmp_path, monkeypatch):
         monkeypatch.chdir(tmp_path)
         (tmp_path / "course").mkdir()

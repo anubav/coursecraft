@@ -16,7 +16,28 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from ._gitutil import run_git, run_git_with_spinner, GitCommandError
+from ._gitutil import run_git, GitCommandError
+
+
+def _install_pre_commit_hooks(target: Path) -> bool:
+    """Run 'pre-commit install' in target if .pre-commit-config.yaml exists.
+
+    Returns True if hooks were installed successfully, False if
+    .pre-commit-config.yaml is absent, pre-commit isn't on PATH, or the
+    command fails for any other reason. Never raises -- hook installation
+    failure must not abort a successful clone."""
+    if not (target / ".pre-commit-config.yaml").exists():
+        return False
+    try:
+        result = subprocess.run(
+            ["pre-commit", "install"],
+            cwd=target,
+            capture_output=True,
+            text=True,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
 
 
 class FetchNotesError(Exception):
@@ -30,10 +51,6 @@ def _run(cmd: list[str], env: Optional[dict] = None) -> subprocess.CompletedProc
         raise FetchNotesError(str(e)) from e
 
 
-def _run_with_spinner(cmd: list[str], message: str) -> subprocess.CompletedProcess:
-    return run_git_with_spinner(cmd, message, runner=_run)
-
-
 def branch_exists_on_remote(repo_url: str, branch: str) -> bool:
     """True if `branch` already exists as a head on the remote."""
     result = subprocess.run(
@@ -41,7 +58,7 @@ def branch_exists_on_remote(repo_url: str, branch: str) -> bool:
         capture_output=True, text=True,
     )
     if result.returncode == 0:
-        return bool(result.stdout.strip())
+        return True
     if result.returncode == 2:
         return False
     raise FetchNotesError(
@@ -76,9 +93,11 @@ def fetch_notes(
     if source_branch:
         clone_cmd += ["--branch", source_branch]
     clone_cmd += [repo_url, str(target)]
-    _run_with_spinner(clone_cmd, "Fetching notes")
+    _run(clone_cmd)
 
     _run(["git", "-C", str(target), "checkout", "-b", branch])
     _run(["git", "-C", str(target), "push", "-u", "origin", branch])
+
+    _install_pre_commit_hooks(target)
 
     return target, branch

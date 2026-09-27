@@ -8,6 +8,7 @@ from .repo_checks import (
     check_duplicate_labels,
     check_dangling_includes,
     check_chapter_headings,
+    check_exercise_labels,
     run_all_checks,
 )
 from .fetch import fetch_notes, branch_exists_on_remote, FetchNotesError
@@ -31,6 +32,7 @@ __all__ = [
     "check_duplicate_labels",
     "check_dangling_includes",
     "check_chapter_headings",
+    "check_exercise_labels",
     "run_all_checks",
     "fetch_notes",
     "branch_exists_on_remote",

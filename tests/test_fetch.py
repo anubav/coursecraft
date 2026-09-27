@@ -3,7 +3,10 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from coursecraft.fetch import fetch_notes, branch_exists_on_remote, FetchNotesError
+from coursecraft.fetch import (
+    fetch_notes, branch_exists_on_remote, FetchNotesError,
+    _install_pre_commit_hooks,
+)
 
 
 class TestBranchExistsOnRemote:
@@ -123,3 +126,46 @@ class TestFetchNotes:
             )
             with pytest.raises(FetchNotesError, match="command failed"):
                 fetch_notes("https://example.com/does-not-exist.git", branch="section/x")
+
+    def test_pre_commit_hooks_installed_after_push(self, tmp_path, monkeypatch):
+        """fetch_notes should call _install_pre_commit_hooks after the push."""
+        monkeypatch.chdir(tmp_path)
+        with patch("coursecraft.fetch.branch_exists_on_remote", return_value=False), \
+             patch("coursecraft.fetch._run"), \
+             patch("coursecraft.fetch._install_pre_commit_hooks") as mock_install:
+            fetch_notes("https://example.com/repo.git", branch="section/x")
+        mock_install.assert_called_once_with(Path("notes"))
+
+
+class TestInstallPreCommitHooks:
+    def test_returns_false_when_no_config_file(self, tmp_path):
+        assert _install_pre_commit_hooks(tmp_path) is False
+
+    def test_returns_true_on_successful_install(self, tmp_path):
+        (tmp_path / ".pre-commit-config.yaml").write_text("repos: []")
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+            assert _install_pre_commit_hooks(tmp_path) is True
+        mock_run.assert_called_once_with(
+            ["pre-commit", "install"],
+            cwd=tmp_path,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_returns_false_when_pre_commit_exits_nonzero(self, tmp_path):
+        (tmp_path / ".pre-commit-config.yaml").write_text("repos: []")
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
+            assert _install_pre_commit_hooks(tmp_path) is False
+
+    def test_returns_false_on_subprocess_exception(self, tmp_path):
+        (tmp_path / ".pre-commit-config.yaml").write_text("repos: []")
+        with patch("subprocess.run", side_effect=FileNotFoundError("pre-commit not found")):
+            assert _install_pre_commit_hooks(tmp_path) is False
+
+    def test_never_raises_even_on_unexpected_exception(self, tmp_path):
+        (tmp_path / ".pre-commit-config.yaml").write_text("repos: []")
+        with patch("subprocess.run", side_effect=RuntimeError("unexpected")):
+            result = _install_pre_commit_hooks(tmp_path)
+        assert result is False

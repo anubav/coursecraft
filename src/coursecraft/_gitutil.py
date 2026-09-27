@@ -10,16 +10,29 @@ catching GitCommandError and re-raising -- this file doesn't know or
 care which command is calling it.
 """
 
-import itertools
+import os
 import subprocess
-import sys
-import threading
-import time
 from typing import Optional
 
 
 class GitCommandError(Exception):
     pass
+
+
+def coursecraft_env() -> dict:
+    """Environment for coursecraft's own git commits in course/.
+
+    Sets COURSECRAFT_INTERNAL=1 (required by the pre-commit hook that
+    guards course/ against hand-editing) and a consistent machine identity
+    so CI runners don't need git user.name / user.email configured."""
+    return {
+        **os.environ,
+        "COURSECRAFT_INTERNAL": "1",
+        "GIT_AUTHOR_NAME": "coursecraft",
+        "GIT_AUTHOR_EMAIL": "coursecraft@localhost",
+        "GIT_COMMITTER_NAME": "coursecraft",
+        "GIT_COMMITTER_EMAIL": "coursecraft@localhost",
+    }
 
 
 def run_git(cmd: list[str], env: Optional[dict] = None) -> subprocess.CompletedProcess:
@@ -29,46 +42,3 @@ def run_git(cmd: list[str], env: Optional[dict] = None) -> subprocess.CompletedP
             f"command failed: {' '.join(cmd)}\n{result.stderr.strip()}"
         )
     return result
-
-
-def run_git_with_spinner(
-    cmd: list[str],
-    message: str,
-    env: Optional[dict] = None,
-    runner=run_git,
-) -> subprocess.CompletedProcess:
-    """Like run_git, but shows a cycling-ellipsis progress indicator on
-    the same line while cmd runs in the background -- a clone can take
-    a while with no other output, and this is just so it doesn't look
-    hung. `runner` defaults to run_git, but callers that wrap it in
-    their own exception type (e.g. fetch.py's _run -> FetchNotesError)
-    should pass that wrapper instead, so a caller mocking their own
-    module-level runner still intercepts this path -- confirmed by a
-    real regression this caught: without this, mocking fetch._run
-    didn't stop the actual `git clone` from running, since this
-    function was calling run_git directly instead."""
-    outcome: dict = {}
-
-    def target():
-        try:
-            outcome['result'] = runner(cmd, env=env)
-        except Exception as e:
-            outcome['error'] = e
-
-    thread = threading.Thread(target=target)
-    thread.start()
-
-    dots_cycle = itertools.cycle(['', '.', '..', '...'])
-    max_width = len(message) + 3
-    while thread.is_alive():
-        line = f'{message}{next(dots_cycle)}'
-        sys.stdout.write('\r' + line.ljust(max_width))
-        sys.stdout.flush()
-        time.sleep(0.4)
-    thread.join()
-    sys.stdout.write('\r' + ' ' * max_width + '\r')
-    sys.stdout.flush()
-
-    if 'error' in outcome:
-        raise outcome['error']
-    return outcome['result']

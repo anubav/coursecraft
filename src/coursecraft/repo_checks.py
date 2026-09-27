@@ -14,10 +14,13 @@ from pathlib import Path
 from typing import Union
 
 from .manifest import NotesManifest
-from .structure import LABEL_RE, HEADING_RE, FenceTracker
+from .structure import LABEL_RE, HEADING_RE, FenceTracker, DIV_FENCE_RE
 from .lint import find_unlabeled_sections
 
 INCLUDE_RE = re.compile(r'\{\{<\s*include\s+([^\s>]+)\s*>\}\}')
+EXERCISE_INCLUDE_RE = re.compile(
+    r'\{\{<\s*include\s+/exercises/([^./\s>]+)\.qmd\s*>\}\}'
+)
 
 # globs whose matched files are worth scanning for labels/includes --
 # everything a manifest declares, in the order it's most useful to report
@@ -175,6 +178,46 @@ def check_chapter_headings(manifest: NotesManifest, repo_root: Union[str, Path])
     return problems
 
 
+def check_exercise_labels(manifest: NotesManifest, repo_root: Union[str, Path]) -> list[str]:
+    """Every {{< include /exercises/<name>.qmd >}} in a chapter or appendix
+    must be the direct body of a :::{#exr-<name>} div. This is what makes
+    @exr-<name> cross-references auto-number correctly in homework files."""
+    repo_root = Path(repo_root)
+    problems = []
+
+    for rel, f in _matched_files(manifest, repo_root, ["chapter_glob", "appendix_dir_glob"]):
+        text = f.read_text(encoding="utf-8")
+        tracker = FenceTracker()
+        exr_stack: list[str | None] = []
+
+        for line in text.split("\n"):
+            is_fence = tracker.consume(line)
+            if is_fence:
+                m = DIV_FENCE_RE.match(line)
+                if m:
+                    rest = m.group(3).strip()
+                    if rest:
+                        exr_m = re.search(r'#exr-([\w-]+)', rest)
+                        exr_stack.append(exr_m.group(1) if exr_m else None)
+                    elif exr_stack:
+                        exr_stack.pop()
+            elif not tracker.in_protected_block():
+                inc_m = EXERCISE_INCLUDE_RE.search(line)
+                if inc_m:
+                    name = inc_m.group(1)
+                    current_exr = next(
+                        (label for label in reversed(exr_stack) if label is not None),
+                        None,
+                    )
+                    if current_exr != name:
+                        include_str = "{{< include /exercises/" + name + ".qmd >}}"
+                        exr_str = ":::{#exr-" + name + "}"
+                        problems.append(
+                            f"{rel}: {include_str} is not inside a '{exr_str}' div"
+                        )
+    return problems
+
+
 #: every check, run together by `coursecraft validate-notes`
 ALL_CHECKS = [
     check_globs_against_repo,
@@ -182,6 +225,7 @@ ALL_CHECKS = [
     check_missing_labels,
     check_duplicate_labels,
     check_dangling_includes,
+    check_exercise_labels,
 ]
 
 
