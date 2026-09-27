@@ -108,6 +108,48 @@ class TestErrors:
             build_toc(tmp_path)
 
 
+class TestAppendices:
+    def test_appendices_appear_in_toc(self, tmp_path):
+        _write_manifest(tmp_path)
+        (tmp_path / "chapters").mkdir()
+        (tmp_path / "appendices").mkdir()
+        (tmp_path / "chapters" / "ch1.qmd").write_text(
+            "# Chapter One {#sec-ch1 .chapter}\n"
+        )
+        (tmp_path / "appendices" / "app-a.qmd").write_text(
+            "# Appendix A {#sec-app-a}\n\n"
+            "## Proofs {#sec-app-a-proofs}\n"
+        )
+        (tmp_path / "_quarto.yml").write_text(yaml.dump({
+            "book": {
+                "chapters": ["chapters/ch1.qmd"],
+                "appendices": ["appendices/app-a.qmd"],
+            }
+        }))
+        toc = build_toc(tmp_path)
+        assert len(toc["chapters"]) == 1
+        assert len(toc["appendices"]) == 1
+        app = toc["appendices"][0]
+        assert app["title"] == "Appendix A"
+        assert app["label"] == "sec-app-a"
+        assert app["sections"] == [{"label": "sec-app-a-proofs", "title": "Proofs"}]
+
+    def test_appendix_order_follows_quarto_yml(self, tmp_path):
+        _write_manifest(tmp_path)
+        (tmp_path / "appendices").mkdir()
+        (tmp_path / "appendices" / "z.qmd").write_text(
+            "# Appendix First {#sec-app-first}\n"
+        )
+        (tmp_path / "appendices" / "a.qmd").write_text(
+            "# Appendix Second {#sec-app-second}\n"
+        )
+        (tmp_path / "_quarto.yml").write_text(yaml.dump({
+            "book": {"appendices": ["appendices/z.qmd", "appendices/a.qmd"]}
+        }))
+        toc = build_toc(tmp_path)
+        assert [a["title"] for a in toc["appendices"]] == ["Appendix First", "Appendix Second"]
+
+
 class TestWriteTocYaml:
     def test_roundtrips(self, tmp_path):
         data = {"chapters": [{"path": "x", "label": "sec-x", "title": "X", "sections": []}],

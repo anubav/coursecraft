@@ -1,0 +1,213 @@
+"""
+coursecraft update -- steps 1-5.
+
+Steps 6 (generate profiles), 7 (generate syllabus), 8 (lock course/),
+and 9 (commit course/) are not yet implemented.
+
+The nine-step flow:
+  1. Build toc by scanning notes/ directly (never reads toc.yml off disk)
+  2. Write toc.yml as a side effect of step 1
+  3. Validate course.yml against notes/ (A/B/C/D) -- abort if invalid,
+     course/ must not be touched at all while the config is broken
+  4. Unlock course/ (undo the read-only chmod from the previous run --
+     no-op on first update since files are already writable)
+  5. Copy notes/ -> course/, instrumenting chapter/appendix .qmd files
+     in-flight; everything else copied verbatim
+  6. Generate profiles                                    [TODO]
+  7. Generate syllabus (course/index.qmd)                [TODO]
+  8. Lock course/ (chmod 0o444 -- local safeguard against hand-editing;
+     does not survive a git clone, so it doesn't affect CI)
+  9. Commit course/                                       [TODO]
+"""
+
+import os
+import re
+import shutil
+from pathlib import Path
+from typing import Union
+
+from pydantic import ValidationError
+
+from .course_checks import run_course_checks
+from .instrument import instrument
+from .manifest import NotesManifest
+from .schema import CourseConfig
+from .toc import build_toc, write_toc_yaml, TocError
+
+
+class UpdateError(Exception):
+    pass
+
+
+# ---------------------------------------------------------------------------
+# Exclusions for the notes/ -> course/ copy
+# ---------------------------------------------------------------------------
+
+# Directories that should never be descended into
+_EXCLUDE_DIRS = frozenset({
+    ".git",
+    "_book", "_site", ".quarto",   # render output / cache
+    ".github",                      # CI workflows for the notes repo
+})
+
+# Files excluded only when they appear at the notes root -- they either
+# belong to the notes repo itself (README, .gitignore, coursecraft.yml,
+# .pre-commit-config.yaml) or are generated fresh by a later update step
+# (index.qmd by the syllabus generator, step 7).
+_EXCLUDE_ROOT_FILES = frozenset({
+    "README.md",
+    ".gitignore",
+    "coursecraft.yml",
+    ".pre-commit-config.yaml",
+    "index.qmd",
+})
+
+# Files excluded wherever they appear
+_EXCLUDE_ANYWHERE = frozenset({".DS_Store"})
+
+# _quarto-<something>.yml are profile files; the base _quarto.yml (no
+# hyphen) is not matched and IS copied -- it carries format/theme settings
+# that the generated profiles inherit.
+_PROFILE_RE = re.compile(r"^_quarto-.+\.yml$")
+
+
+def _is_excluded(rel: Path) -> bool:
+    """True if this notes-relative path should be skipped during copy."""
+    name = rel.name
+    if name in _EXCLUDE_ANYWHERE:
+        return True
+    if _PROFILE_RE.match(name):
+        return True
+    if rel.parent == Path(".") and name in _EXCLUDE_ROOT_FILES:
+        return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# Lock / unlock
+# ---------------------------------------------------------------------------
+
+def _chmod_tree(path: Path, mode: int) -> None:
+    """Recursively set mode on every *file* under path, skipping .git/
+    and its contents at every level (git must manage its own metadata)."""
+    for dirpath, dirnames, filenames in os.walk(path):
+        dirnames[:] = [d for d in dirnames if d != ".git"]
+        for name in filenames:
+            (Path(dirpath) / name).chmod(mode)
+
+
+def unlock_course(course_path: Path) -> None:
+    """Make every file in course/ writable. Safe no-op on first update."""
+    _chmod_tree(course_path, 0o644)
+
+
+def lock_course(course_path: Path) -> None:
+    """Make every file in course/ read-only. Local safeguard against
+    accidental hand-editing; the permission does not survive a git clone."""
+    _chmod_tree(course_path, 0o444)
+
+
+# ---------------------------------------------------------------------------
+# Copy + instrument (step 5)
+# ---------------------------------------------------------------------------
+
+def _copy_notes(notes_root: Path, course_path: Path, manifest: NotesManifest) -> None:
+    """Copy notes_root -> course_path.
+
+    Chapter and appendix files (matched by the manifest's globs) are
+    instrumented in-flight: every labeled ## section gets wrapped in a
+    content-hidden div keyed on sections.<label>, ready for the profile
+    YAML to show or hide. Everything else is copied verbatim. Excluded
+    paths (render artifacts, notes-repo metadata, step-7-generated files)
+    are skipped entirely."""
+    conv = manifest.conventions
+    instrument_files = (
+        set(notes_root.glob(conv.chapter_glob))
+        | set(notes_root.glob(conv.appendix_dir_glob))
+    )
+
+    for dirpath, dirnames, filenames in os.walk(notes_root):
+        current = Path(dirpath)
+        # Prune excluded dirs and render-artifact dirs (*_files) in-place
+        # so os.walk never descends into them.
+        dirnames[:] = [
+            d for d in dirnames
+            if d not in _EXCLUDE_DIRS and not d.endswith("_files")
+        ]
+
+        for name in filenames:
+            src = current / name
+            rel = src.relative_to(notes_root)
+            if _is_excluded(rel):
+                continue
+
+            dst = course_path / rel
+            dst.parent.mkdir(parents=True, exist_ok=True)
+
+            if src in instrument_files:
+                dst.write_text(
+                    instrument(src.read_text(encoding="utf-8")),
+                    encoding="utf-8",
+                )
+            else:
+                shutil.copy2(src, dst)
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+def update(
+    notes_dir: Union[str, Path] = "notes",
+    course_dir: Union[str, Path] = "course",
+    course_yaml: Union[str, Path] = "course.yml",
+    toc_out: Union[str, Path] = "toc.yml",
+) -> None:
+    """Run update steps 1-5 (profiles, syllabus, lock, commit: TODO).
+
+    Raises UpdateError for any condition that should abort the run --
+    missing directories, invalid course.yml, failed validation checks.
+    course/ is never modified when validation fails (step 3 aborts before
+    step 4 unlocks anything)."""
+    notes_root = Path(notes_dir)
+    course_path = Path(course_dir)
+
+    if not notes_root.is_dir():
+        raise UpdateError(f"'{notes_root}' not found.")
+    if not course_path.is_dir():
+        raise UpdateError(
+            f"'{course_path}' not found -- run 'coursecraft init' first."
+        )
+
+    # Steps 1-2: build toc, write toc.yml
+    try:
+        toc_data = build_toc(notes_root)
+    except TocError as e:
+        raise UpdateError(str(e)) from e
+    write_toc_yaml(toc_data, toc_out)
+
+    # Step 3: validate course.yml against notes -- must abort before
+    # touching course/ if anything is wrong
+    try:
+        config = CourseConfig.from_yaml(course_yaml)
+    except FileNotFoundError:
+        raise UpdateError(f"'{course_yaml}' not found.")
+    except ValidationError as e:
+        raise UpdateError(f"course.yml is invalid:\n{e}") from e
+
+    results = run_course_checks(config, notes_root, toc_data)
+    if any(results.values()):
+        problems = [p for ps in results.values() for p in ps]
+        raise UpdateError(
+            "validation failed:\n" + "\n".join(f"  {p}" for p in problems)
+        )
+
+    # Step 4: unlock course/ (idempotent -- no-op if already writable)
+    unlock_course(course_path)
+
+    # Step 5: copy + instrument
+    # The manifest was already loaded by build_toc (step 1); we load it
+    # again here rather than thread it through the call chain, since it's
+    # a tiny file and the double read is cheaper than a refactor.
+    manifest = NotesManifest.from_yaml(notes_root / "coursecraft.yml")
+    _copy_notes(notes_root, course_path, manifest)

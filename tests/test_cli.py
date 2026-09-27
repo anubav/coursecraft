@@ -120,6 +120,83 @@ class TestValidateCLI:
         out = capsys.readouterr().out
         assert 'INVALID' in out
 
+    def _make_notes_dir(self, root):
+        """Minimal notes repo with one chapter/section and one exercise."""
+        (root / "chapters").mkdir()
+        (root / "chapters" / "ch1.qmd").write_text(
+            "# Chapter One {#sec-ch1 .chapter}\n\n"
+            "## Arguments {#sec-ch1-arguments}\n\ntext\n\n"
+            "## Validity {#sec-ch1-validity}\n\ntext\n"
+        )
+        (root / "exercises").mkdir()
+        (root / "exercises" / "ex1.qmd").write_text("An exercise.\n")
+        (root / "coursecraft.yml").write_text(yaml.dump({
+            "coursecraft_spec": "1.0",
+            "conventions": {
+                "chapter_glob": "chapters/*.qmd",
+                "appendix_dir_glob": "appendices/*.qmd",
+                "exercise_glob": "exercises/*.qmd",
+                "insert_glob": "inserts/**/*.qmd",
+            },
+        }))
+        (root / "_quarto.yml").write_text(yaml.dump({
+            "book": {"chapters": ["chapters/ch1.qmd"]},
+        }))
+
+    VALID_WITH_NOTES = {
+        "course": {"title": "x", "notes_repo": "https://example.com/n.git"},
+        "section": {
+            "instructor": "a", "course_number": "b", "term": "c", "location": "d",
+            "meeting_times": "e", "start_date": "2026-01-01", "end_date": "2026-06-01",
+        },
+        "lectures": [
+            {"date": "2026-01-05", "notes_end": "sec-ch1-arguments"},
+            {"date": "2026-01-07", "notes_end": "sec-ch1-validity"},
+        ],
+        "assignments": [
+            {"name": "hw-01", "assigned": "2026-01-07", "due": "2026-01-14",
+             "exercises": ["ex1"]},
+        ],
+    }
+
+    def test_notes_flag_passes_when_all_checks_pass(self, tmp_path, monkeypatch, capsys):
+        notes = tmp_path / "notes"
+        notes.mkdir()
+        self._make_notes_dir(notes)
+        f = tmp_path / "course.yml"
+        f.write_text(yaml.dump(self.VALID_WITH_NOTES))
+
+        code = run_cli(['validate', str(f), '--notes', str(notes)], monkeypatch)
+
+        assert code == 0
+        assert 'notes checks: OK' in capsys.readouterr().out
+
+    def test_notes_flag_fails_on_missing_label(self, tmp_path, monkeypatch, capsys):
+        notes = tmp_path / "notes"
+        notes.mkdir()
+        self._make_notes_dir(notes)
+        data = {**self.VALID_WITH_NOTES,
+                "lectures": [{"date": "2026-01-05", "notes_end": "sec-ch1-ghost"}]}
+        f = tmp_path / "course.yml"
+        f.write_text(yaml.dump(data))
+
+        code = run_cli(['validate', str(f), '--notes', str(notes)], monkeypatch)
+
+        assert code == 1
+        assert 'sec-ch1-ghost' in capsys.readouterr().out
+
+    def test_notes_flag_absent_skips_cross_checks(self, tmp_path, monkeypatch, capsys):
+        """Without --notes, validate exits 0 even if labels would be wrong --
+        it's schema-only mode and the cross-checks simply don't run."""
+        data = {**self.VALID_WITH_NOTES,
+                "lectures": [{"date": "2026-01-05", "notes_end": "sec-missing"}]}
+        f = tmp_path / "course.yml"
+        f.write_text(yaml.dump(data))
+
+        code = run_cli(['validate', str(f)], monkeypatch)
+
+        assert code == 0
+
 
 class TestValidateNotesCLI:
     def _make_minimal_repo(self, root):

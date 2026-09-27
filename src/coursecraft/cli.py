@@ -12,6 +12,8 @@ from .repo_checks import run_all_checks
 from .fetch import fetch_notes, FetchNotesError
 from .init import init, InitError
 from .toc import build_toc, write_toc_yaml, TocError
+from .course_checks import run_course_checks
+from .update import update, UpdateError
 
 
 def _cmd_reflow(args) -> int:
@@ -67,6 +69,27 @@ def _cmd_validate(args) -> int:
         kind = 'exam' if a.is_exam else 'homework'
         sol = 'with solutions' if a.show_solutions else 'no solutions'
         print(f'  {a.name} [{kind}]: assigned {a.assigned}, due {a.due} ({sol})')
+
+    if not args.notes:
+        return 0
+
+    notes_root = Path(args.notes)
+    try:
+        toc_data = build_toc(notes_root)
+    except TocError as e:
+        print(f'validate: could not build toc from {notes_root}: {e}')
+        return 1
+
+    results = run_course_checks(config, notes_root, toc_data)
+    any_problems = any(results.values())
+    if any_problems:
+        print(f'\n{args.path}: notes checks FAILED')
+        for check_name, problems in results.items():
+            for p in problems:
+                print(f'  [{check_name}] {p}')
+        return 1
+
+    print('  notes checks: OK (labels exist, exercises exist, solutions exist, ordering)')
     return 0
 
 
@@ -185,6 +208,16 @@ def _cmd_toc(args) -> int:
     return 0
 
 
+def _cmd_update(args) -> int:
+    try:
+        update()
+    except UpdateError as e:
+        print(f'update failed: {e}')
+        return 1
+    print('update: OK')
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog='coursecraft')
     sub = parser.add_subparsers(dest='command', required=True)
@@ -214,9 +247,17 @@ def main() -> None:
 
     validate_p = sub.add_parser(
         'validate',
-        help='Validate a course.yml file and summarize its schedule.',
+        help='Validate a course.yml file and summarize its schedule. '
+             'Pass --notes to also check labels, exercises, solutions, '
+             'and lecture ordering against a real notes repo.',
     )
     validate_p.add_argument('path', help='Path to course.yml')
+    validate_p.add_argument(
+        '--notes', default=None, metavar='DIR',
+        help='Path to a notes repo root; enables A/B/C/D cross-checks '
+             'against real content (labels exist, exercises exist, '
+             'solutions exist, label ordering is non-decreasing).',
+    )
     validate_p.set_defaults(func=_cmd_validate)
 
     validate_notes_p = sub.add_parser(
@@ -265,6 +306,13 @@ def main() -> None:
              'notes/_quarto.yml (not lexical filename order).',
     )
     toc_p.set_defaults(func=_cmd_toc)
+
+    update_p = sub.add_parser(
+        'update',
+        help='Regenerate ./course/ from ./notes and ./course.yml '
+             '(validates, copies, instruments). Requires both to exist.',
+    )
+    update_p.set_defaults(func=_cmd_update)
 
     args = parser.parse_args()
     sys.exit(args.func(args))

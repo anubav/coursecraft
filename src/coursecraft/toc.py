@@ -62,18 +62,16 @@ def _load_quarto_order(notes_root: Path) -> tuple[list[str], list[str]]:
 
 def _build_entry(path: Path, notes_root: Path) -> dict:
     text = path.read_text(encoding="utf-8")
-    chapter_headings = find_headings(text, level=1)
-    if chapter_headings:
-        title = _clean_title(chapter_headings[0].heading_text)
-        label = chapter_headings[0].label
-    else:
-        title = path.stem
-        label = None
+    all_headings = find_headings(text)
+
+    h1 = next((h for h in all_headings if h.level == 1), None)
+    title = _clean_title(h1.heading_text) if h1 else path.stem
+    label = h1.label if h1 else None
 
     sections = [
         {"label": h.label, "title": _clean_title(h.heading_text)}
-        for h in find_headings(text, level=2)
-        if h.label is not None
+        for h in all_headings
+        if h.level == 2 and h.label is not None
     ]
 
     return {
