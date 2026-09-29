@@ -18,7 +18,6 @@ D: lectures' notes_end labels appear in non-decreasing document order
 """
 
 from pathlib import Path
-from typing import Union
 
 from .schema import CourseConfig
 from .toc import label_positions
@@ -45,7 +44,7 @@ def check_labels_exist(config: CourseConfig, toc_data: dict) -> list[str]:
     return problems
 
 
-def check_exercises_exist(config: CourseConfig, notes_root: Union[str, Path]) -> list[str]:
+def check_exercises_exist(config: CourseConfig, notes_root: str | Path) -> list[str]:
     """Check B: every exercise name in every assignment's exercises list
     must have a matching .qmd file under notes/exercises/. Failure mode:
     a dangling {{< include >}} in a generated homework page, surfacing as
@@ -62,7 +61,7 @@ def check_exercises_exist(config: CourseConfig, notes_root: Union[str, Path]) ->
     return problems
 
 
-def check_solutions_exist(config: CourseConfig, notes_root: Union[str, Path]) -> list[str]:
+def check_solutions_exist(config: CourseConfig, notes_root: str | Path) -> list[str]:
     """Check C: every exercise with show_solutions=True must have a matching
     file under notes/solutions/. Skipped entirely if notes/solutions/ doesn't
     exist -- its absence means the instructor simply hasn't populated solutions
@@ -116,7 +115,7 @@ def check_label_ordering(config: CourseConfig, toc_data: dict) -> list[str]:
 
 def run_course_checks(
     config: CourseConfig,
-    notes_root: Union[str, Path],
+    notes_root: str | Path,
     toc_data: dict,
 ) -> dict[str, list[str]]:
     """Run all four checks, returning a dict keyed by check name (including

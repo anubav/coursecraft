@@ -20,6 +20,8 @@ import subprocess
 import pytest
 import yaml
 
+import json
+
 from coursecraft.update import (
     UpdateError,
     _is_excluded,
@@ -28,6 +30,7 @@ from coursecraft.update import (
     unlock_course,
     lock_course,
     update,
+    _write_course_manifest,
 )
 from coursecraft._gitutil import coursecraft_env
 from coursecraft.manifest import NotesManifest
@@ -365,6 +368,22 @@ class TestCopyNotes:
         _copy_notes(notes, course, self._manifest(notes))
 
         assert not (course / "_book").exists()
+
+    def test_solutions_dir_not_copied(self, tmp_path):
+        """notes/solutions/ (private solutions repo cloned locally) must not
+        appear in course/ after update."""
+        notes = tmp_path / "notes"
+        notes.mkdir()
+        _make_notes(notes)
+        sol_dir = notes / "solutions"
+        sol_dir.mkdir()
+        (sol_dir / "ex1-solution.qmd").write_text("The answer is 42.\n")
+        course = tmp_path / "course"
+        course.mkdir()
+
+        _copy_notes(notes, course, self._manifest(notes))
+
+        assert not (course / "solutions").exists()
 
     def test_render_files_dir_not_copied(self, tmp_path):
         """Render artifact directories like ch1_files/ must be excluded."""
@@ -714,3 +733,67 @@ class TestUpdate:
 
         # course/ unchanged from the first valid run
         assert (course / "chapters" / "ch1.qmd").read_text() == content_after_first
+
+
+# ---------------------------------------------------------------------------
+# Manifest writing (step 8b)
+# ---------------------------------------------------------------------------
+
+class TestWriteCourseManifest:
+    def _config_with_starts(self, tmp_path):
+        import yaml
+        from coursecraft.schema import CourseConfig
+        cy = tmp_path / "course.yml"
+        data = {
+            "course": {
+                "title": "Introduction to Logic",
+                "notes_repo": "https://github.com/example/logic-notes.git",
+            },
+            "section": {
+                "instructor": "Jane Smith",
+                "course_number": "PHIL 201",
+                "term": "Fall 2026",
+                "location": "Room 1",
+                "meeting_times": "MWF 10:30",
+                "start_date": "2026-09-28",
+                "end_date": "2026-12-11",
+            },
+            "lectures": [
+                {"date": "2026-09-28", "notes_start": "sec-ch1-arguments",
+                 "notes_end": "sec-ch1-arguments"},
+                {"date": "2026-09-30", "notes_end": "sec-ch1-validity"},
+            ],
+            "assignments": [],
+        }
+        cy.write_text(yaml.dump(data))
+        return CourseConfig.from_yaml(cy)
+
+    def test_manifest_file_created(self, tmp_path):
+        config = self._config_with_starts(tmp_path)
+        _write_course_manifest(config, tmp_path)
+        assert (tmp_path / "coursecraft-manifest.json").exists()
+
+    def test_manifest_is_valid_json(self, tmp_path):
+        config = self._config_with_starts(tmp_path)
+        _write_course_manifest(config, tmp_path)
+        data = json.loads((tmp_path / "coursecraft-manifest.json").read_text())
+        assert isinstance(data, dict)
+
+    def test_lecture_with_start_label_included(self, tmp_path):
+        config = self._config_with_starts(tmp_path)
+        _write_course_manifest(config, tmp_path)
+        data = json.loads((tmp_path / "coursecraft-manifest.json").read_text())
+        assert "2026-09-28" in data
+        assert data["2026-09-28"] == "sec-ch1-arguments"
+
+    def test_lecture_without_start_label_omitted(self, tmp_path):
+        config = self._config_with_starts(tmp_path)
+        _write_course_manifest(config, tmp_path)
+        data = json.loads((tmp_path / "coursecraft-manifest.json").read_text())
+        assert "2026-09-30" not in data
+
+    def test_manifest_written_by_full_update(self, tmp_path):
+        notes, course, cy = _setup(tmp_path)
+        update(notes_dir=notes, course_dir=course,
+               course_yaml=cy, toc_out=tmp_path / "toc.yml")
+        assert (course / "coursecraft-manifest.json").exists()

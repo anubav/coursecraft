@@ -15,11 +15,14 @@ The ten-step flow:
   6. Generate hw-NN.qmd / exam-NN.qmd (and *-solutions.qmd) in course/
   7. Generate Quarto profile YAMLs (_quarto-<date>.yml) in course/
   8. Generate syllabus (course/index.qmd)
+  8b. Write coursecraft-manifest.json (date -> start label, for CI redirect)
   9. Lock course/ (chmod 0o444 -- local safeguard against hand-editing;
      does not survive a git clone, so it doesn't affect CI)
  10. Commit course/
+ 11. (optional) Push course/ to its remote
 """
 
+import json
 import os
 import re
 import shutil
@@ -51,6 +54,20 @@ def _git(cmd: list[str], env: dict | None = None) -> None:
         raise UpdateError(str(e)) from e
 
 
+def _write_course_manifest(config: CourseConfig, course_path: Path) -> None:
+    """Write coursecraft-manifest.json mapping each lecture date to its
+    notes_start label. The CI deploy workflow reads this to anchor the
+    landing-page redirect to the first section of the current lecture."""
+    data = {
+        lec.date.isoformat(): lec.notes_start
+        for lec in config.lectures
+        if lec.notes_start
+    }
+    (course_path / "coursecraft-manifest.json").write_text(
+        json.dumps(data, indent=2), encoding="utf-8"
+    )
+
+
 def _commit_course(course_path: Path) -> None:
     """Stage all changes in course/ and commit if anything is staged.
 
@@ -80,12 +97,13 @@ _EXCLUDE_DIRS = frozenset({
     ".git",
     "_book", "_site", ".quarto",   # render output / cache
     ".github",                      # CI workflows for the notes repo
+    "solutions",                    # private solutions repo (checked out locally for rendering)
 })
 
 # Files excluded only when they appear at the notes root -- they either
 # belong to the notes repo itself (README, .gitignore, coursecraft.yml,
 # .pre-commit-config.yaml) or are generated fresh by a later update step
-# (index.qmd by the syllabus generator, step 7).
+# (index.qmd by the syllabus generator, step 8).
 _EXCLUDE_ROOT_FILES = frozenset({
     "README.md",
     ".gitignore",
@@ -212,8 +230,9 @@ def update(
     course_dir: Union[str, Path] = "course",
     course_yaml: Union[str, Path] = "course.yml",
     toc_out: Union[str, Path] = "toc.yml",
+    push: bool = False,
 ) -> None:
-    """Run all ten update steps.
+    """Run all ten update steps, optionally pushing course/ to its remote.
 
     Raises UpdateError for any condition that should abort the run --
     missing directories, invalid course.yml, failed validation checks.
@@ -278,8 +297,15 @@ def update(
     # Step 8: generate syllabus (course/index.qmd)
     generate_syllabus(config, toc_data, course_path)
 
+    # Step 8b: write coursecraft-manifest.json for CI redirect anchoring
+    _write_course_manifest(config, course_path)
+
     # Step 9: lock course/ (local safeguard against accidental hand-editing)
     lock_course(course_path)
 
     # Step 10: commit course/
     _commit_course(course_path)
+
+    # Step 11: push course/ to remote (optional)
+    if push:
+        _git(["git", "-C", str(course_path), "push", "-u", "origin", "HEAD"], env=coursecraft_env())

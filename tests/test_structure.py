@@ -1,6 +1,5 @@
 from coursecraft.structure import (
     FenceTracker,
-    slugify,
     is_ordered_list_marker,
     is_fence_line,
     blank_gap_continues_list,
@@ -69,19 +68,6 @@ class TestFenceTracker:
         assert not t.in_protected_block()
         t.consume(":::")
 
-
-class TestSlugify:
-    def test_basic_text(self):
-        assert slugify("Why Study Logic?") == "why-study-logic"
-
-    def test_strips_inline_math(self):
-        assert slugify("Soundness of $\\mathbf{S}$") == "soundness-of"
-
-    def test_strips_latex_macros(self):
-        assert slugify("The $\\Ga\\proves\\ph$ Relation") == "the-relation"
-
-    def test_strips_existing_label(self):
-        assert slugify("Validity {#sec-validity}") == "validity"
 
 
 class TestOrderedListMarker:

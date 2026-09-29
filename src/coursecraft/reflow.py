@@ -5,7 +5,6 @@ see structure.py for the shared parsing this builds on.
 """
 
 import re
-from typing import Optional
 
 from .structure import (
     FenceTracker,
@@ -15,7 +14,7 @@ from .structure import (
     line_indent,
     is_fence_line,
     blank_gap_continues_list,
-    _ROMAN_WHITELIST,
+    ROMAN_WHITELIST,
 )
 
 MATH_OR_ATOMIC_RE = re.compile(
@@ -218,7 +217,7 @@ def _tokenize_preserving_adjacency(text: str):
 
 DANGEROUS_LINE_START_RE = re.compile(
     r'^(\d+[.)]|[a-zA-Z][.)]|(?:'
-    + '|'.join(sorted(_ROMAN_WHITELIST, key=len, reverse=True))
+    + '|'.join(sorted(ROMAN_WHITELIST, key=len, reverse=True))
     + r')[.)]|@[\w-]+\))(\s|$)'
 )
 
@@ -306,7 +305,7 @@ def _split_sentences(text: str):
     return chunks
 
 
-def _wrap_paragraph(text: str, width: Optional[int]) -> str:
+def _wrap_paragraph(text: str, width: int | None) -> str:
     """width=None selects semantic-linebreak mode (one sentence per
     output line); an integer selects column-wrap mode at that width."""
     if width is None:
@@ -335,7 +334,7 @@ def _wrap_paragraph(text: str, width: Optional[int]) -> str:
 # Main entry point
 # ---------------------------------------------------------------------------
 
-def reflow(text: str, width: Optional[int] = None) -> str:
+def reflow(text: str, width: int | None = None) -> str:
     """Reflow a .qmd file's text. width=None (the default) is semantic-
     linebreak mode; an integer selects column-wrap mode at that width."""
     lines = text.split('\n')

@@ -2,7 +2,6 @@
 
 from datetime import date
 from pathlib import Path
-from typing import Optional, Union
 
 from .schema import CourseConfig, Lecture
 from .toc import label_positions
@@ -51,7 +50,7 @@ def _lecture_start_label(
     lec: Lecture,
     prev_end_pos: int,
     pos_to_label: dict[int, str],
-) -> Optional[str]:
+) -> str | None:
     """The label where this lecture begins (for display purposes).
 
     Windowed lectures: explicitly declared notes_start.
@@ -175,7 +174,7 @@ def _build_syllabus(config: CourseConfig, toc_data: dict) -> str:
 def generate_syllabus(
     config: CourseConfig,
     toc_data: dict,
-    course_path: Union[str, Path],
+    course_path: str | Path,
 ) -> None:
     """Write course/index.qmd. Overwrites any prior content (including the
     init placeholder) on every update run."""

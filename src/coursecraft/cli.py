@@ -14,6 +14,7 @@ from .init import init, InitError
 from .toc import build_toc, write_toc_yaml, TocError
 from .course_checks import run_course_checks
 from .update import update, UpdateError
+from .deploy import deploy, DeployError, setup_instructions
 
 
 def _cmd_reflow(args) -> int:
@@ -225,11 +226,29 @@ def _cmd_toc(args) -> int:
 
 def _cmd_update(args) -> int:
     try:
-        update()
+        update(push=args.push)
     except UpdateError as e:
         print(f'update failed: {e}')
         return 1
     print('update: OK')
+    return 0
+
+
+def _cmd_deploy(args) -> int:
+    try:
+        workflow_path = deploy(
+            solutions_repo=args.solutions_repo,
+            force=args.force,
+        )
+    except DeployError as e:
+        print(f'deploy failed: {e}')
+        return 1
+    print(f"Wrote '{workflow_path}'.")
+    print()
+    print(setup_instructions(
+        solutions_repo=args.solutions_repo,
+        course_repo=args.course_repo,
+    ))
     return 0
 
 
@@ -327,7 +346,34 @@ def main() -> None:
         help='Regenerate ./course/ from ./notes and ./course.yml '
              '(validates, copies, instruments). Requires both to exist.',
     )
+    update_p.add_argument(
+        '--push', action='store_true',
+        help='Push course/ to its remote after committing.',
+    )
     update_p.set_defaults(func=_cmd_update)
+
+    deploy_p = sub.add_parser(
+        'deploy',
+        help='Generate .github/workflows/deploy.yml in course/ to publish '
+             'the course site to GitHub Pages. Run once; after that, push '
+             'course/ to trigger the workflow.',
+    )
+    deploy_p.add_argument(
+        '--solutions-repo', default=None, metavar='OWNER/REPO',
+        help='Private solutions repo (e.g. owner/logic-solutions). When '
+             'given, the workflow checks it out at render time using a '
+             'SOLUTIONS_DEPLOY_KEY secret.',
+    )
+    deploy_p.add_argument(
+        '--course-repo', default=None, metavar='OWNER/REPO',
+        help='Course repo (e.g. owner/phil101). Used only in the setup '
+             'instructions printed after the workflow file is written.',
+    )
+    deploy_p.add_argument(
+        '--force', action='store_true',
+        help='Overwrite an existing deploy.yml.',
+    )
+    deploy_p.set_defaults(func=_cmd_deploy)
 
     args = parser.parse_args()
     sys.exit(args.func(args))

@@ -9,7 +9,6 @@ ARCHITECTURE.md for the full rationale.
 """
 
 from pathlib import Path
-from typing import Optional, Union
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -24,7 +23,7 @@ class Conventions(BaseModel):
     insert_glob: str
     label_prefix: str = "sec-"
     chapter_marker_class: str = "chapter"
-    macros_include: Optional[str] = None
+    macros_include: str | None = None
     raw_text_div_classes: list[str] = Field(default_factory=lambda: ["lproof"])
 
     # catches a typo'd field name (e.g. 'exercize_glob') immediately,
@@ -50,6 +49,6 @@ class NotesManifest(BaseModel):
         return self
 
     @classmethod
-    def from_yaml(cls, path: Union[str, Path]) -> "NotesManifest":
+    def from_yaml(cls, path: str | Path) -> "NotesManifest":
         raw = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
         return cls.model_validate(raw)

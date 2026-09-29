@@ -80,21 +80,10 @@ class FenceTracker:
         return False
 
 
-def slugify(text: str) -> str:
-    """Turn heading text into a url/label-safe slug: strip inline math,
-    footnote markers, existing {#...} attrs, and LaTeX macros first."""
-    text = re.sub(r'\$[^$]*\$', '', text)
-    text = LABEL_RE.sub('', text)
-    text = re.sub(r'\[\^[^\]]*\]', '', text)
-    text = re.sub(r'\\[A-Za-z]+', '', text)
-    text = text.lower()
-    text = re.sub(r'[^a-z0-9]+', '-', text)
-    return text.strip('-')
-
 
 # --- ordinary (non-lproof) numbered/lettered/roman-numeral list markers ---
 
-_ROMAN_WHITELIST = {
+ROMAN_WHITELIST = {
     'i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x',
     'xi', 'xii', 'xiii', 'xiv', 'xv',
 }
@@ -113,7 +102,7 @@ def is_ordered_list_marker(letters_or_digits: str) -> bool:
     lowered = letters_or_digits.lower()
     if len(letters_or_digits) == 1 and letters_or_digits.isalpha():
         return True
-    return lowered in _ROMAN_WHITELIST
+    return lowered in ROMAN_WHITELIST
 
 
 def line_indent(line: str) -> int:

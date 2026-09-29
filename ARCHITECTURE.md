@@ -255,13 +255,16 @@ start rather than retrofitted after a real access-control question.
   triggering solutions), requiring a real backend (e.g. Django)
   injecting into the Quarto output. Not designed yet, but the schema's
   `due` field is already positioned to support it without rework.
-- **Label-ordering sanity check.** `update`'s human-error checks (do
-  `course.yml`'s referenced labels/exercises still exist in `notes/`)
-  only catch a label that's missing, not one that exists but is out of
-  order -- e.g. a `notes_end` typo pointing at content earlier in the
-  book than an already-covered lecture. Deferred because it needs real
-  machinery (each label's absolute document position, not just
-  existence), not because it's low-value.
+- **Label-ordering sanity check.** ~~Deferred.~~ Now implemented as
+  check D in `course_checks.py`. Each label's position is computed by
+  `label_positions()` in `toc.py` (a sequential walk of the toc tree,
+  chapter labels before their sections, chapters before appendices) and
+  stored in a dict; check D compares each lecture's `notes_end` position
+  against the previous lecture's. One intentional subtlety: if lecture N
+  is out of order, `prev_pos` is still advanced to N's end position, so
+  lecture N+1 is compared against N (not against N-1 again) -- without
+  this, a single real error cascades into spurious errors for every
+  subsequent lecture.
 - **`coursecraft sync-back`**, automating branch -> commit -> push ->
   open-PR for returning an edited `notes/` to the master repo at
   term's end. Plain git already does this (practiced by hand earlier
@@ -395,30 +398,28 @@ example would have been guessing at the right shape. But `update.py`
 and `deploy.py` are next, and both need the exact same
 subprocess-running pattern; leaving the duplication in place at this
 point would have meant going from two copies to four, a meaningfully
-worse place to do this refactor from. `run_git`/`run_git_with_spinner`
-now live in `_gitutil.py`; `fetch.py`'s `_run`/`_run_with_spinner` and
-`init.py`'s `_run` are thin wrappers that translate the shared
-`GitCommandError` into their own command-specific exception type
-(`FetchNotesError`, `InitError`), preserving every existing test's
-`pytest.raises(FetchNotesError, ...)`/`patch("coursecraft.fetch._run")`
-assertions unchanged.
+worse place to do this refactor from. `run_git` now lives in
+`_gitutil.py`; each caller (`fetch.py`'s `_run`, `init.py`'s `_run`,
+`update.py`'s `_git`) is a thin wrapper that translates the shared
+`GitCommandError` into its own command-specific exception type
+(`FetchNotesError`, `InitError`, `UpdateError`), preserving every
+existing test's `pytest.raises`/`patch` assertions unchanged.
 
-This refactor caught a real regression before it shipped, not a
-hypothetical one worth mentioning for color: the first version of
-`run_git_with_spinner` called `run_git` directly rather than through
-whatever runner the caller had wrapped, which meant
-`patch("coursecraft.fetch._run")` silently stopped intercepting the
-clone step specifically -- the mocked tests kept passing their
-assertions on the *other* commands (checkout, push) while the actual
-`git clone` ran for real against a fake test URL, only surfacing as a
-network error. Fixed by making `run_git_with_spinner` take the
-single-command runner as a parameter (default `run_git`), so a caller
-that wraps it in its own exception-translating `_run` gets that same
-wrapper called from inside the spinner's background thread too.
-Confirmed fixed by both the full test suite and a live re-run against
-the real `logic-notes` repo, matching every prior verification's
-degree of skepticism rather than trusting the refactor because it
-looked right on paper.
+`_gitutil.py` also holds `coursecraft_env()`, which returns the
+environment dict that every internal git commit needs: `COURSECRAFT_INTERNAL=1`
+(required by `course/`'s pre-commit hook) plus a consistent
+`GIT_AUTHOR_NAME`/`EMAIL` / `GIT_COMMITTER_NAME`/`EMAIL` identity.
+Sharing this from one place means `init` and `update` can never drift
+out of sync on what the hook expects.
+
+A text spinner (`run_git_with_spinner`) was added here briefly and then
+removed -- it ran `git clone` in a background thread while printing
+cycling ellipsis dots, to make a slow clone visibly not-hung. Removed
+because: it added threading complexity, the spinner required its runner
+to be passed as a parameter (so the caller's `_run` wrapper was still
+called inside the background thread, not `run_git` directly -- a real
+regression found before shipping), and ultimately the UX gain of a
+spinner over a silent wait wasn't worth the machinery.
 
 ## `instrument.py`: wraps sections, nothing else, and is course.yml-independent
 
@@ -545,35 +546,156 @@ today, so this doesn't bite yet, but a portable tool should handle
 the nested case eventually rather than assume every adopting notes
 repo stays flat forever.
 
+## `update`: the ten-step flow, and why course/ is never half-updated
+
+`update` either fully succeeds or leaves `course/` exactly as it was
+before -- this is the property the step ordering is designed to protect.
+Steps 1-3 (build toc, write toc.yml, validate) all run before step 4
+(unlock course/) touches anything. If validation fails, the directory
+is never unlocked; a second call to `update` with a corrected
+`course.yml` finds `course/` unchanged and starts fresh.
+
+The ten steps:
+
+1. **Build toc** -- scan `notes/` by walking `_quarto.yml`'s chapter
+   list. Never reads `toc.yml` off disk; always derives from source.
+2. **Write toc.yml** -- side effect of step 1; used externally by the
+   course-yaml wizard. `update` itself uses the in-memory `toc_data`
+   for all subsequent steps, never reads toc.yml back.
+3. **Validate** -- `CourseConfig.from_yaml` + A/B/C/D course checks.
+   Abort before touching course/ if anything is wrong.
+4. **Unlock** -- `chmod 0o644` everything in `course/`. No-op on first
+   run (files already writable); removes the read-only protection from
+   the previous run so steps 5-8 can write.
+5. **Copy + instrument** -- `notes/` → `course/`, with chapter/appendix
+   `.qmd` files instrumented in-flight (labeled `##` sections wrapped
+   in `content-hidden` divs). Everything else verbatim. Exclusions:
+   render output dirs, notes-repo metadata (`.gitignore`, `README.md`,
+   `coursecraft.yml`, `.pre-commit-config.yaml`), pre-existing profile
+   YAMLs, and `index.qmd` (overwritten by step 8).
+5b. **Strip base `_quarto.yml`** -- the copied `_quarto.yml` is
+   trimmed to `chapters: [index.qmd]` with no appendices. Each profile
+   (step 7) appends exactly the chapters and appendices that have
+   visible content for its date, rather than the full list from the
+   notes repo (which would render empty invisible chapters for every
+   profile before those chapters are reached).
+6. **Generate hw/exam files** -- `hw-NN.qmd` and `hw-NN-solutions.qmd`
+   per assignment, using `macros_include` from the manifest.
+7. **Generate profiles** -- one `_quarto-<date>.yml` per timeline
+   moment (see Profile-break rule above).
+8. **Generate syllabus** -- writes `course/index.qmd`.
+9. **Lock** -- `chmod 0o444` everything in `course/`. Local safeguard
+   against accidental hand-editing; git doesn't preserve this bit, so
+   it has no effect on CI or a fresh clone.
+10. **Commit** -- `git add -A && git commit` in `course/`, using
+    `coursecraft_env()`. Skipped (without error) if nothing is staged
+    after step 9 (i.e., notes and course.yml haven't changed since the
+    last run). The commit is guarded by `course/`'s pre-commit hook,
+    which rejects any commit not setting `COURSECRAFT_INTERNAL=1`.
+
+## Profiles: Approach 1 (visible-chapters-per-profile)
+
+The base `_quarto.yml` in `course/` holds only `chapters: [index.qmd]`
+after step 5b strips it. Each profile's `book.chapters` list contains
+exactly the chapters that have visible content for that date (i.e., at
+least one section label in the visible set for that moment, or the
+chapter label itself is visible). Quarto's profile merge appends the
+profile's `chapters` to the base's, so the effective chapter list for
+a given date is `[index.qmd] + visible_chapters + hw_files`.
+
+Why not keep all chapters in the base and use `content-hidden` alone
+to gate sections? A chapter with no visible sections still renders as
+an empty entry in the book nav -- visually confusing and hard to
+explain. Excluding the file from the chapter list entirely is cleaner.
+
+`_visible_chapters(visible, toc_data)` determines which chapters/
+appendices have any visible content: a chapter is included if its own
+chapter label or any of its section labels appears in the visible set.
+Hw files always go at the end of `book.chapters` (not appendices) and
+are unnumbered via `# Homework N {.unnumbered}` -- no `title:` in
+frontmatter, which would create a duplicate heading and break Quarto's
+unnumbered detection.
+
+## Syllabus: schedule grouped by chapter
+
+`syllabus.py` builds `course/index.qmd` with a course-info table, a
+schedule section (if any lectures are defined), and an assignments
+table. The schedule groups lectures under `### Chapter Title` headings
+that change whenever the chapter of the current lecture's start label
+changes. The start label for cumulative lectures is the first label
+after the previous lecture's `notes_end`; for windowed lectures it's
+the explicit `notes_start`. A chapter-level start label shows
+"Introduction" rather than repeating the chapter title that already
+appears in the `###` heading. `Lecture.name` overrides the derived
+topic when set.
+
+## Planned extensions
+
+These aren't designed yet -- listed here so the design decisions made
+so far can be evaluated against them before they conflict.
+
+- **Web interface for course.yml editing and new-notes creation.** A
+  Django (or similar) backend importing the same `CourseConfig` and
+  `NotesManifest` Pydantic models, so form validation and YAML
+  validation are the same code, not a second copy. YAML on disk remains
+  the durable source of truth; the UI edits/generates the file, it
+  doesn't replace it with a DB representation. `model_json_schema()`
+  export (free from Pydantic) means a JSON-Schema-driven form library
+  can generate a working form directly from the model. The web backend
+  would also orchestrate `coursecraft update` (or call `update()`
+  directly) rather than the instructor running it manually.
+
+- **Interactive exercise submission.** Students answer online; a due
+  date disables submission rather than just triggering solution reveal.
+  Requires a real backend injecting into Quarto output. The schema's
+  `due` field is already positioned to support this without rework --
+  it's kept distinct from `show_solutions` timing precisely so a
+  submission-deadline feature has a date to attach to without having to
+  un-conflate anything retroactively.
+
+- **Student auth and access control.** Genuinely different from
+  date-gating (stops an unenrolled outsider seeing anything, vs. an
+  enrolled student seeing something too early). Deferred until the web
+  interface exists to manage it, since access control without an admin
+  UI is unlikely to be usable anyway.
+
+- **Online VS Code editor for notes.** An `openvscode-server` or
+  similar instance giving instructors a browser-based editor over the
+  cloned `notes/` directory with pre-commit hooks active and a
+  "push and update" button. The pre-commit hooks (reflow, lint) are
+  already in the notes repo; the infrastructure question is hosting
+  and auth, not what the hooks should do.
+
 ## Package structure
 
 ```
 src/coursecraft/
-├── structure.py   # fence tracking, heading/label detection, list-marker
-                    # recognition -- generic parsing, no formatting or
-                    # validation decisions
+├── structure.py    # fence-aware heading/label/list parsing; find_headings()
 ├── reflow.py       # the formatting engine, built on structure.py
 ├── lint.py         # missing-label detection (report only)
-├── schema.py       # course.yml: Pydantic models + validation
-├── manifest.py     # coursecraft.yml: Pydantic model + validation
+├── schema.py       # course.yml: CourseConfig / Lecture / Assignment Pydantic
+│                   # models + validators; Lecture.name for custom syllabus topics
+├── manifest.py     # coursecraft.yml: NotesManifest / Conventions Pydantic model
 ├── repo_checks.py  # checks a real notes repo's content against its manifest
-├── _gitutil.py     # shared subprocess-running helpers for git ops
-├── fetch.py        # fetch-notes: clone onto a section/<name> branch
-├── init.py         # init: scaffold course/ + a placeholder course.yml
-├── instrument.py   # wraps ## sections in content-hidden divs for
-                      # profile generation to control visibility later
-├── toc.py          # builds toc.yml from ./notes, ordered by
-                      # notes/_quarto.yml
-                      # profile generation to control visibility later
-└── cli.py          # thin argparse wrapper: reflow / lint / validate /
-                      # validate-notes / fetch-notes / init
+├── course_checks.py # A/B/C/D cross-checks between course.yml and notes/
+├── _gitutil.py     # run_git(), coursecraft_env() -- shared by all git ops
+├── fetch.py        # fetch-notes: clone → branch → push → pre-commit install
+├── init.py         # init: scaffold course/ git repo + placeholder course.yml
+├── instrument.py   # wraps ## sections in content-hidden divs
+├── toc.py          # build_toc() ordered by notes/_quarto.yml; label_positions()
+├── hw.py           # generate hw-NN.qmd / hw-NN-solutions.qmd per assignment
+├── profiles.py     # generate _quarto-<date>.yml per timeline moment
+├── syllabus.py     # generate course/index.qmd
+├── update.py       # orchestrates all 10 update steps
+└── cli.py          # thin argparse wrapper over all commands
 ```
 
 `cli.py` is intentionally thin -- every real function is directly
 importable (`from coursecraft.schema import CourseConfig`,
-`from coursecraft import reflow`), so a future web backend or test
-suite calls the same code the CLI does, never a CLI subprocess wrapper
-around logic that only exists inside `if __name__ == "__main__"`.
+`from coursecraft import reflow`, `from coursecraft import update`), so
+a future web backend or test suite calls the same code the CLI does,
+never a CLI subprocess wrapper around logic that only exists inside
+`if __name__ == "__main__"`.
 
 ## Testing philosophy
 
