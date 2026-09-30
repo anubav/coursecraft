@@ -53,15 +53,29 @@ def _git(cmd: list[str], env: dict | None = None) -> None:
         raise UpdateError(str(e)) from e
 
 
-def _write_course_manifest(config: CourseConfig, course_path: Path) -> None:
-    """Write coursecraft-manifest.json mapping each lecture date to its
-    first section label. The CI deploy workflow reads this to anchor the
-    landing-page redirect to the first section of the current lecture."""
-    data = {
-        lec.date.isoformat(): lec.sections[0]
-        for lec in config.lectures
-        if lec.sections
-    }
+def _write_course_manifest(
+    config: CourseConfig, course_path: Path, toc_data: dict
+) -> None:
+    """Write coursecraft-manifest.json mapping each lecture date to the
+    full relative URL of its first section (e.g.
+    'chapters/ch1.html#sec-ch1-intro'). The CI deploy workflow appends
+    this to the date-profile base URL to land on the right section."""
+    label_targets: dict[str, str] = {}
+    for group in (toc_data.get("chapters", []), toc_data.get("appendices", [])):
+        for chapter in group:
+            path = chapter.get("path", "").replace(".qmd", ".html")
+            if chapter.get("label"):
+                label_targets[chapter["label"]] = f"{path}#{chapter['label']}"
+            for sec in chapter.get("sections", []):
+                if sec.get("label"):
+                    label_targets[sec["label"]] = f"{path}#{sec['label']}"
+
+    data = {}
+    for lec in config.lectures:
+        if lec.sections:
+            first = lec.sections[0]
+            data[lec.date.isoformat()] = label_targets.get(first, first)
+
     (course_path / "coursecraft-manifest.json").write_text(
         json.dumps(data, indent=2), encoding="utf-8"
     )
@@ -309,7 +323,7 @@ def update(
     generate_syllabus(config, toc_data, course_path)
 
     # Step 8b: write coursecraft-manifest.json for CI redirect anchoring
-    _write_course_manifest(config, course_path)
+    _write_course_manifest(config, course_path, toc_data)
 
     # Step 9: lock course/ (local safeguard against accidental hand-editing)
     if lock:

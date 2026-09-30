@@ -107,9 +107,11 @@ jobs:
           mkdir -p _book
           LATEST="${{{{ steps.profiles.outputs.latest }}}}"
           START="${{{{ steps.profiles.outputs.start }}}}"
-          ANCHOR=""
-          [ -n "$START" ] && ANCHOR="#${{START}}"
-          URL="./${{LATEST}}/${{ANCHOR}}"
+          if [ -n "$START" ]; then
+            URL="./${{LATEST}}/${{START}}"
+          else
+            URL="./${{LATEST}}/"
+          fi
           if [ -n "$LATEST" ]; then
             cat > _book/index.html <<HTML
           <!DOCTYPE html>

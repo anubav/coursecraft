@@ -76,9 +76,9 @@ class TestRenderWorkflow:
         assert "start=" in w
         assert "coursecraft-manifest.json" in w
 
-    def test_anchor_applied_conditionally(self):
+    def test_start_used_as_path_in_url(self):
         w = _render_workflow(None)
-        assert 'ANCHOR="#${START}"' in w
+        assert 'URL="./${LATEST}/${START}"' in w
 
     def test_concurrency_group_present(self):
         w = _render_workflow(None)

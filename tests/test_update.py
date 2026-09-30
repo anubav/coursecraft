@@ -767,27 +767,49 @@ class TestWriteCourseManifest:
         cy.write_text(yaml.dump(data))
         return CourseConfig.from_yaml(cy)
 
+    def _toc(self):
+        return {
+            "chapters": [
+                {
+                    "path": "chapters/ch1.qmd",
+                    "label": "sec-ch1",
+                    "title": "Chapter 1",
+                    "sections": [
+                        {"label": "sec-ch1-arguments", "title": "Arguments"},
+                        {"label": "sec-ch1-validity", "title": "Validity"},
+                    ],
+                }
+            ],
+            "appendices": [],
+        }
+
     def test_manifest_file_created(self, tmp_path):
         config = self._config_with_sections(tmp_path)
-        _write_course_manifest(config, tmp_path)
+        _write_course_manifest(config, tmp_path, self._toc())
         assert (tmp_path / "coursecraft-manifest.json").exists()
 
     def test_manifest_is_valid_json(self, tmp_path):
         config = self._config_with_sections(tmp_path)
-        _write_course_manifest(config, tmp_path)
+        _write_course_manifest(config, tmp_path, self._toc())
         data = json.loads((tmp_path / "coursecraft-manifest.json").read_text())
         assert isinstance(data, dict)
 
-    def test_lecture_with_sections_uses_first_label(self, tmp_path):
+    def test_lecture_with_sections_uses_full_path_target(self, tmp_path):
         config = self._config_with_sections(tmp_path)
-        _write_course_manifest(config, tmp_path)
+        _write_course_manifest(config, tmp_path, self._toc())
         data = json.loads((tmp_path / "coursecraft-manifest.json").read_text())
         assert "2026-09-28" in data
+        assert data["2026-09-28"] == "chapters/ch1.html#sec-ch1-arguments"
+
+    def test_label_not_in_toc_falls_back_to_label(self, tmp_path):
+        config = self._config_with_sections(tmp_path)
+        _write_course_manifest(config, tmp_path, {"chapters": [], "appendices": []})
+        data = json.loads((tmp_path / "coursecraft-manifest.json").read_text())
         assert data["2026-09-28"] == "sec-ch1-arguments"
 
     def test_lecture_without_sections_omitted(self, tmp_path):
         config = self._config_with_sections(tmp_path)
-        _write_course_manifest(config, tmp_path)
+        _write_course_manifest(config, tmp_path, self._toc())
         data = json.loads((tmp_path / "coursecraft-manifest.json").read_text())
         assert "2026-09-30" not in data
 
