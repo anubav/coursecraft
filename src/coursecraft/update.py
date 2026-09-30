@@ -96,7 +96,6 @@ _EXCLUDE_DIRS = frozenset({
     ".git",
     "_book", "_site", ".quarto",   # render output / cache
     ".github",                      # CI workflows for the notes repo
-    "solutions",                    # private solutions repo (checked out locally for rendering)
 })
 
 # Files excluded only when they appear at the notes root -- they either
@@ -160,12 +159,10 @@ def lock_course(course_path: Path) -> None:
 # Copy + instrument (step 5)
 # ---------------------------------------------------------------------------
 
-def _strip_quarto_chapter_lists(course_path: Path) -> None:
+def _strip_quarto_chapter_lists(course_path: Path, title: str | None = None) -> None:
     """Strip all chapters (except index.qmd) and appendices from the
-    _quarto.yml that was just copied into course/. This leaves only
-    index.qmd in chapters and removes appendices entirely, so that each
-    generated profile can append exactly the chapters/appendices that
-    have visible content for that date."""
+    _quarto.yml that was just copied into course/. Also sets book.title
+    to the section-specific course title when provided, and removes author."""
     quarto_yml = course_path / "_quarto.yml"
     if not quarto_yml.exists():
         return
@@ -173,6 +170,9 @@ def _strip_quarto_chapter_lists(course_path: Path) -> None:
     book = data.setdefault("book", {})
     book["chapters"] = ["index.qmd"]
     book.pop("appendices", None)
+    book.pop("author", None)
+    if title:
+        book["title"] = title
     quarto_yml.write_text(
         yaml.dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
     )
@@ -286,7 +286,7 @@ def update(
 
     # Step 5b: strip chapters/appendices from base _quarto.yml so profiles
     # can set them per-date without duplicating what's already in the base.
-    _strip_quarto_chapter_lists(course_path)
+    _strip_quarto_chapter_lists(course_path, title=config.course.title)
 
     # Step 6: generate homework / exam files
     generate_homework_files(config, course_path, manifest.conventions.macros_include)

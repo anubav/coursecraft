@@ -41,6 +41,8 @@ def _solutions_content(
             "",
             _include(f"/exercises/{ex}.qmd"),
             "",
+            "**Solution:**",
+            "",
             _include(f"/solutions/{ex}.qmd"),
         ]
     lines.append("")

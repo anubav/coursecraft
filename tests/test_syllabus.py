@@ -65,13 +65,18 @@ def _toc() -> dict:
 
 
 class TestBuildSyllabusHeader:
-    def test_h1_heading_unnumbered(self):
+    def test_syllabus_heading_unnumbered(self):
         content = _build_syllabus(_config(), _toc())
         assert "# Syllabus {.unnumbered}" in content
 
-    def test_course_number_and_title_in_info_table(self):
+    def test_course_title_not_in_syllabus_body(self):
+        # title goes into _quarto.yml via _strip_quarto_chapter_lists, not index.qmd
         content = _build_syllabus(_config(), _toc())
-        assert "PHIL 101: Introduction to Logic" in content
+        assert "# Introduction to Logic" not in content
+
+    def test_course_number_in_info_table(self):
+        content = _build_syllabus(_config(), _toc())
+        assert "PHIL 101" in content
 
     def test_term_in_info_table(self):
         content = _build_syllabus(_config(), _toc())
@@ -95,9 +100,25 @@ class TestBuildSyllabusHeader:
         content = _build_syllabus(cfg, _toc())
         assert "A great course." in content
 
+    def test_description_before_info_table(self):
+        cfg = _config()
+        cfg.section.description = "A great course."
+        content = _build_syllabus(cfg, _toc())
+        assert content.index("A great course.") < content.index("**Course**")
+
     def test_no_description_when_empty(self):
         content = _build_syllabus(_config(), _toc())
         assert "A great course." not in content
+
+    def test_instructor_email_links_name(self):
+        cfg = _config()
+        cfg.section.instructor_email = "jane@example.com"
+        content = _build_syllabus(cfg, _toc())
+        assert "[Jane Smith](mailto:jane@example.com)" in content
+
+    def test_instructor_plain_when_no_email(self):
+        content = _build_syllabus(_config(), _toc())
+        assert "mailto:" not in content
 
 
 class TestScheduleTopics:
@@ -117,7 +138,6 @@ class TestScheduleTopics:
         ])
         content = _build_syllabus(cfg, _toc())
         assert "Introduction" in content
-        assert "### Argument Validity" in content
 
     def test_chapter_label_as_first_section_shows_introduction(self):
         """When sections[0] is a chapter label → topic = 'Introduction'."""
@@ -126,7 +146,6 @@ class TestScheduleTopics:
         ])
         content = _build_syllabus(cfg, _toc())
         assert "Introduction" in content
-        assert "### Argument Validity" in content
 
     def test_each_lecture_uses_own_first_section_as_topic(self):
         """Each lecture's topic is derived from its own sections[0]."""
@@ -161,16 +180,16 @@ class TestScheduleTopics:
         ])
         content = _build_syllabus(cfg, _toc())
         assert "Overview" in content
-        assert "| Sep 28 | Introduction |" not in content
-        assert "| Sep 28 | Overview |" in content
+        assert "Introduction |" not in content
 
-    def test_explicit_name_preserves_chapter_grouping(self):
-        """Chapter heading is still derived from sections[0] even when name is set."""
+    def test_explicit_name_single_table_row(self):
+        """Named lecture appears as a single row in the table, linked via sections[0]."""
         cfg = _config(lectures=[
             {"date": "2026-09-28", "sections": ["sec-ch1-intro"], "name": "Overview"},
         ])
         content = _build_syllabus(cfg, _toc())
-        assert "### Argument Validity" in content
+        assert "Sep 28" in content
+        assert "[Overview](" in content
 
     def test_empty_sections_falls_back_to_dash(self):
         """Lecture with no sections shows '—' as topic."""
@@ -181,35 +200,43 @@ class TestScheduleTopics:
         assert "—" in content
 
 
-class TestScheduleChapterGrouping:
-    def test_chapter_heading_emitted_when_chapter_changes(self):
-        cfg = _config(lectures=[
-            {"date": "2026-09-28", "sections": ["sec-ch1-proof"]},
-            {"date": "2026-09-30", "sections": ["sec-ch2-syntax"]},
+class TestScheduleParts:
+    def _parts_config(self):
+        return _config(lectures=[
+            {"part": "Part I", "lectures": [
+                {"date": "2026-09-28", "sections": ["sec-ch1-intro"]},
+                {"date": "2026-09-30", "sections": ["sec-ch1-proof"]},
+            ]},
+            {"part": "Part II", "lectures": [
+                {"date": "2026-10-05", "sections": ["sec-ch2-syntax"]},
+            ]},
         ])
-        content = _build_syllabus(cfg, _toc())
-        assert "### Argument Validity" in content
-        assert "### Propositional Logic" in content
 
-    def test_chapter_heading_not_repeated_for_same_chapter(self):
+    def test_single_table_with_parts(self):
+        content = _build_syllabus(self._parts_config(), _toc())
+        assert content.count("| Date | Topic |") == 1
+
+    def test_part_names_appear_as_bold_rows(self):
+        content = _build_syllabus(self._parts_config(), _toc())
+        assert "**Part I**" in content
+        assert "**Part II**" in content
+
+    def test_part_headers_before_their_lectures(self):
+        content = _build_syllabus(self._parts_config(), _toc())
+        p1_pos = content.index("**Part I**")
+        p2_pos = content.index("**Part II**")
+        sep28_pos = content.index("Sep 28")
+        oct5_pos = content.index("Oct 5")
+        assert p1_pos < sep28_pos < p2_pos < oct5_pos
+
+    def test_no_parts_produces_single_flat_table(self):
         cfg = _config(lectures=[
             {"date": "2026-09-28", "sections": ["sec-ch1-intro"]},
             {"date": "2026-09-30", "sections": ["sec-ch1-proof"]},
         ])
         content = _build_syllabus(cfg, _toc())
-        assert content.count("### Argument Validity") == 1
-
-    def test_chapter_heading_before_its_lectures(self):
-        cfg = _config(lectures=[
-            {"date": "2026-09-28", "sections": ["sec-ch1-proof"]},
-            {"date": "2026-09-30", "sections": ["sec-ch2-syntax"]},
-        ])
-        content = _build_syllabus(cfg, _toc())
-        ch1_pos = content.index("### Argument Validity")
-        ch2_pos = content.index("### Propositional Logic")
-        sep28_pos = content.index("Sep 28")
-        sep30_pos = content.index("Sep 30")
-        assert ch1_pos < sep28_pos < ch2_pos < sep30_pos
+        assert content.count("| Date | Topic |") == 1
+        assert "**" not in content.split("## Schedule")[1].split("## Assignments")[0]
 
 
 class TestBuildSyllabusAssignments:
@@ -269,6 +296,5 @@ class TestGenerateSyllabus:
         )
         generate_syllabus(cfg, _toc(), tmp_path)
         content = (tmp_path / "index.qmd").read_text()
-        assert "# Syllabus {.unnumbered}" in content
         assert "## Schedule" in content
         assert "## Assignments" in content

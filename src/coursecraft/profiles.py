@@ -10,6 +10,7 @@ alone (no toc data needed). generate_profiles() then uses toc_data to resolve
 which sections are visible at each moment and writes the profile YAML files.
 """
 
+import json
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -162,13 +163,28 @@ def generate_profiles(
         sections = _sections_metadata(visible, toc_data)
         date_str = str(moment.date)
 
+        sections_js = json.dumps(sections, separators=(",", ":"))
+        hw_files_js = json.dumps(
+            [f.replace(".qmd", ".html") for f in moment.hw_files],
+            separators=(",", ":"),
+        )
+        script = (
+            f"<script>"
+            f"window.coursecraftSections={sections_js};"
+            f"window.coursecraftHwFiles={hw_files_js};"
+            f"</script>"
+        )
+        chapters: list = list(vis_chapters)
+        if moment.hw_files:
+            chapters.append({"part": "Assignments", "chapters": moment.hw_files})
         profile: dict = {
             "project": {"output-dir": f"_book/{date_str}"},
             "book": {
-                "chapters": vis_chapters + moment.hw_files,
+                "chapters": chapters,
                 "appendices": vis_appendices,
             },
             "metadata": {"sections": sections},
+            "format": {"html": {"include-in-header": [{"text": script}]}},
         }
 
         path = course_path / f"_quarto-{date_str}.yml"

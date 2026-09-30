@@ -3,12 +3,31 @@
 from datetime import date
 from pathlib import Path
 
-from .schema import CourseConfig, Lecture
+from .hw import assignment_stems
+from .schema import CourseConfig, Lecture, Part
 
 
 def _short_date(d: date) -> str:
     """'Sep 28' -- abbreviated month, no leading zero on day."""
     return d.strftime("%b") + f" {d.day}"
+
+
+def _label_link_targets(toc_data: dict) -> dict[str, str]:
+    """Map each section label to a markdown link target 'path#label'.
+
+    The path is the chapter's .qmd path (relative to the project root),
+    which Quarto converts to .html in rendered output. When the chapter
+    isn't included in the current profile the link is simply dead."""
+    targets: dict[str, str] = {}
+    for group in (toc_data.get("chapters", []), toc_data.get("appendices", [])):
+        for chapter in group:
+            path = chapter.get("path", "")
+            if chapter.get("label"):
+                targets[chapter["label"]] = f"{path}#{chapter['label']}"
+            for sec in chapter.get("sections", []):
+                if sec.get("label"):
+                    targets[sec["label"]] = f"{path}#{sec['label']}"
+    return targets
 
 
 def _label_titles(toc_data: dict) -> dict[str, str]:
@@ -52,15 +71,37 @@ def _md_table(headers: list[str], rows: list[list[str]]) -> str:
     return "\n".join(lines)
 
 
+def _lecture_topic(
+    lec: Lecture,
+    titles: dict[str, str],
+    chapter_labels: set[str],
+    link_targets: dict[str, str] | None = None,
+) -> str:
+    first_label = lec.sections[0] if lec.sections else None
+    if lec.name:
+        text = lec.name
+    elif first_label is None:
+        return "—"
+    elif first_label in chapter_labels:
+        text = "Introduction"
+    else:
+        text = titles.get(first_label, first_label)
+    if link_targets and first_label and first_label in link_targets:
+        return f"[{text}]({link_targets[first_label]})"
+    return text
+
+
 def _schedule_parts(config: CourseConfig, toc_data: dict) -> list[str]:
-    """Build the '## Schedule' section, grouping lectures by chapter with
-    a '### Chapter Title' subheading whenever the chapter changes."""
+    """Build the '## Schedule' section as a single table.
+
+    If the course defines parts, bold part-name rows act as visual
+    separators within the table. Otherwise a flat date/topic table
+    is produced."""
     if not config.lectures:
         return []
 
     titles = _label_titles(toc_data)
-    ch_map = _label_chapter(toc_data)
-
+    link_targets = _label_link_targets(toc_data)
     chapter_labels = {
         ch.get("label")
         for group in (toc_data.get("chapters", []), toc_data.get("appendices", []))
@@ -68,79 +109,119 @@ def _schedule_parts(config: CourseConfig, toc_data: dict) -> list[str]:
         if ch.get("label")
     }
 
-    lecture_items: list[tuple[Lecture, str, str]] = []
-    # (lec, start_title, chapter_title)
+    def _topic(lec: Lecture) -> str:
+        return _lecture_topic(lec, titles, chapter_labels, link_targets)
 
-    for lec in config.lectures:
-        first_label = lec.sections[0] if lec.sections else None
-        if lec.name:
-            start_title = lec.name
-        elif first_label is None:
-            start_title = "—"
-        elif first_label in chapter_labels:
-            start_title = "Introduction"
-        else:
-            start_title = titles.get(first_label, first_label)
-        _, ch_title = ch_map.get(first_label, ("", "")) if first_label else ("", "")
-        lecture_items.append((lec, start_title, ch_title))
+    rows: list[list[str]] = []
 
-    parts: list[str] = ["", "## Schedule"]
-    current_chapter = None
-    chapter_rows: list[list[str]] = []
+    if config.parts:
+        in_part: set = {lec.date for p in config.parts for lec in p.lectures}
+        for part in config.parts:
+            rows.append([f"**{part.part}**", ""])
+            for lec in part.lectures:
+                rows.append([_short_date(lec.date), _topic(lec)])
+        for lec in config.lectures:
+            if lec.date not in in_part:
+                rows.append([_short_date(lec.date), _topic(lec)])
+    else:
+        for lec in config.lectures:
+            rows.append([_short_date(lec.date), _topic(lec)])
 
-    def _flush(ch_title: str) -> None:
-        if chapter_rows:
-            parts.append("")
-            if ch_title:
-                parts.append(f"### {ch_title}")
-                parts.append("")
-            parts.append(_md_table(["Date", "Topic"], chapter_rows))
-            chapter_rows.clear()
-
-    for lec, start_title, ch_title in lecture_items:
-        if ch_title != current_chapter:
-            _flush(current_chapter or "")
-            current_chapter = ch_title
-        chapter_rows.append([_short_date(lec.date), start_title])
-
-    _flush(current_chapter or "")
-    return parts
+    return [
+        "",
+        "## Schedule",
+        "",
+        "::: {#coursecraft-schedule}",
+        _md_table(["Date", "Topic"], rows),
+        ":::",
+    ]
 
 
 def _build_syllabus(config: CourseConfig, toc_data: dict) -> str:
     sec = config.section
+    instructor_cell = (
+        f"[{sec.instructor}](mailto:{sec.instructor_email})"
+        if sec.instructor_email
+        else sec.instructor
+    )
     info_rows = [
-        ["**Course**", f"{sec.course_number}: {config.course.title}"],
+        ["**Course**", sec.course_number],
         ["**Term**", sec.term],
-        ["**Instructor**", sec.instructor],
+        ["**Instructor**", instructor_cell],
         ["**Location**", sec.location],
         ["**Meeting times**", sec.meeting_times],
     ]
 
-    parts = [
+    parts: list[str] = [
+        "---",
+        "number-sections: false",
+        "---",
+        "",
         "# Syllabus {.unnumbered}",
         "",
-        _md_table(["", ""], info_rows),
     ]
 
     if sec.description:
-        parts += ["", sec.description]
+        parts += [sec.description, ""]
+
+    parts.append(_md_table(["", ""], info_rows))
 
     parts += _schedule_parts(config, toc_data)
 
     if config.assignments:
+        stems = assignment_stems(config)
         assignment_rows = [
-            [a.name, _short_date(a.assigned), _short_date(a.due)]
-            for a in config.assignments
+            [f"[{a.name}](#){{data-hw-stem=\"{stem}\"}}", _short_date(a.assigned), _short_date(a.due)]
+            for stem, a in zip(stems, config.assignments)
         ]
         parts += [
             "",
             "## Assignments",
             "",
+            "::: {#coursecraft-assignments}",
             _md_table(["", "Assigned", "Due"], assignment_rows),
+            ":::",
         ]
 
-    parts.append("")
+    parts += [
+        "",
+        "```{=html}",
+        "<script>",
+        "document.addEventListener('DOMContentLoaded', function () {",
+        "  function deadLink(a) {",
+        "    a.style.color = 'inherit';",
+        "    a.style.textDecoration = 'none';",
+        "    a.style.cursor = 'default';",
+        "    a.style.opacity = '0.4';",
+        "    a.addEventListener('click', function (e) { e.preventDefault(); });",
+        "  }",
+        "  var s = window.coursecraftSections;",
+        "  if (s) {",
+        "    document.querySelectorAll('#coursecraft-schedule a[href]').forEach(function (a) {",
+        "      var label = a.href.split('#')[1];",
+        "      if (label && s[label] === false) deadLink(a);",
+        "    });",
+        "  }",
+        "  var hw = window.coursecraftHwFiles;",
+        "  if (hw) {",
+        "    document.querySelectorAll('#coursecraft-assignments a[data-hw-stem]').forEach(function (a) {",
+        "      var stem = a.getAttribute('data-hw-stem');",
+        "      var solFile = stem + '-solutions.html';",
+        "      var baseFile = stem + '.html';",
+        "      if (hw.indexOf(solFile) !== -1) {",
+        "        a.href = solFile;",
+        "      } else if (hw.indexOf(baseFile) !== -1) {",
+        "        a.href = baseFile;",
+        "      } else {",
+        "        deadLink(a);",
+        "      }",
+        "    });",
+        "  }",
+        "});",
+        "</script>",
+        "```",
+        "",
+    ]
     return "\n".join(parts)
 
 

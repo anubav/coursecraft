@@ -174,6 +174,8 @@ def deploy(
             f"'{workflow_path}' already exists. Use --force to overwrite."
         )
 
+    if workflow_path.exists():
+        workflow_path.chmod(0o644)
     workflow_path.write_text(_render_workflow(solutions_repo), encoding="utf-8")
     return workflow_path
 

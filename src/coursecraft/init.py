@@ -43,6 +43,7 @@ _book/
 _site/
 *_files/
 .DS_Store
+solutions/
 """
 
 README = """# course

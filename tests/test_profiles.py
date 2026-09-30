@@ -520,7 +520,10 @@ class TestGenerateProfiles:
         )
         generate_profiles(cfg, toc, tmp_path)
         data = yaml.safe_load((tmp_path / "_quarto-2027-01-06.yml").read_text())
-        assert "hw-01.qmd" in data["book"]["chapters"]
+        chapters = data["book"]["chapters"]
+        assignments_part = next((c for c in chapters if isinstance(c, dict) and c.get("part") == "Assignments"), None)
+        assert assignments_part is not None
+        assert "hw-01.qmd" in assignments_part["chapters"]
         assert "hw-01.qmd" not in data["book"].get("appendices", [])
 
     def test_no_hw_files_before_assigned(self, tmp_path):

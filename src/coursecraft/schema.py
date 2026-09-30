@@ -40,6 +40,7 @@ class SectionInfo(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     instructor: str
+    instructor_email: str | None = None
     course_number: str
     term: str
     location: str
@@ -117,13 +118,41 @@ class _CourseSectionOnly(BaseModel):
     course: CourseInfo
 
 
+class Part(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    part: str
+    lectures: list[Lecture]
+
+
 class CourseConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     course: CourseInfo
     section: SectionInfo
     lectures: list[Lecture] = Field(default_factory=list)
+    parts: list[Part] = Field(default_factory=list)
     assignments: list[Assignment] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_lecture_structure(cls, data: dict) -> dict:
+        """If the lectures list contains part entries (dicts with a 'part'
+        key), flatten them into a single lectures list and extract the
+        part grouping into a separate 'parts' list for syllabus use."""
+        raw = data.get("lectures", [])
+        if not any(isinstance(e, dict) and "part" in e for e in raw):
+            return data
+        flat: list[dict] = []
+        parts: list[dict] = []
+        for entry in raw:
+            if isinstance(entry, dict) and "part" in entry:
+                part_lecs = entry.get("lectures", [])
+                parts.append({"part": entry["part"], "lectures": part_lecs})
+                flat.extend(part_lecs)
+            else:
+                flat.append(entry)
+        return {**data, "lectures": flat, "parts": parts}
 
     @model_validator(mode="after")
     def _check_lectures(self) -> "CourseConfig":
