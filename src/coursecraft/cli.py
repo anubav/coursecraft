@@ -64,8 +64,9 @@ def _cmd_validate(args) -> int:
     n_asn = len(config.assignments)
     print(f'{args.path}: OK -- {n_lec} lecture(s), {n_asn} assignment(s)')
     for i, lec in enumerate(config.lectures):
-        mode = 'cumulative' if lec.effective_cumulative else 'windowed'
-        print(f'  {config.lecture_name(i)}: {lec.date} -> {lec.notes_end} ({mode})')
+        mode = 'cumulative' if lec.cumulative else 'windowed'
+        sections_str = ', '.join(lec.sections) if lec.sections else '(none)'
+        print(f'  {config.lecture_name(i)}: {lec.date} [{sections_str}] ({mode})')
     for a in config.assignments:
         kind = 'exam' if a.is_exam else 'homework'
         sol = 'with solutions' if a.show_solutions else 'no solutions'
@@ -90,7 +91,7 @@ def _cmd_validate(args) -> int:
                 print(f'  [{check_name}] {p}')
         return 1
 
-    print('  notes checks: OK (labels exist, exercises exist, solutions exist, ordering)')
+    print('  notes checks: OK (labels exist, exercises exist, solutions exist)')
     return 0
 
 
@@ -226,7 +227,7 @@ def _cmd_toc(args) -> int:
 
 def _cmd_update(args) -> int:
     try:
-        update(push=args.push)
+        update(push=args.push, lock=not args.no_lock)
     except UpdateError as e:
         print(f'update failed: {e}')
         return 1
@@ -349,6 +350,11 @@ def main() -> None:
     update_p.add_argument(
         '--push', action='store_true',
         help='Push course/ to its remote after committing.',
+    )
+    update_p.add_argument(
+        '--no-lock', action='store_true',
+        help='Leave course/ writable after update (skips step 9). '
+             'Useful when you need to render or preview locally.',
     )
     update_p.set_defaults(func=_cmd_update)
 

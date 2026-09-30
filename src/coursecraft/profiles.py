@@ -13,13 +13,11 @@ which sections are visible at each moment and writes the profile YAML files.
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Union
 
 import yaml
 
 from .hw import assignment_stems
 from .schema import CourseConfig, Lecture
-from .toc import label_positions
 
 
 @dataclass
@@ -65,39 +63,58 @@ def build_timeline(config: CourseConfig) -> list[ProfileMoment]:
     return moments
 
 
-def _visible_sections(moment: ProfileMoment, positions: dict[str, int]) -> set[str]:
+def _expand_labels(sections: list[str], toc_data: dict) -> set[str]:
+    """Expand chapter labels to all their subsections; leave subsection labels as-is."""
+    children: dict[str, set[str]] = {}
+    for group in (toc_data.get("chapters", []), toc_data.get("appendices", [])):
+        for entry in group:
+            top_label = entry.get("label")
+            if top_label:
+                child_set = {top_label}
+                for sec in entry.get("sections", []):
+                    if sec.get("label"):
+                        child_set.add(sec["label"])
+                children[top_label] = child_set
+    expanded: set[str] = set()
+    for label in sections:
+        if label in children:
+            expanded.update(children[label])
+        else:
+            expanded.add(label)
+    return expanded
+
+
+def _visible_sections(moment: ProfileMoment, toc_data: dict) -> set[str]:
     """Compute the set of section labels visible at this moment.
 
-    For each lecture (in date order), the revealed range is:
-    - cumulative: all positions 0..notes_end
-    - windowed:   positions notes_start..notes_end only
-
-    The result is the union across all lectures, so a later cumulative
-    lecture fills any gaps left by earlier windowed ones."""
-    visible: set[str] = set()
+    Cumulative lectures add their sections to the running frontier.
+    A windowed lecture at the moment's own date short-circuits and returns
+    only its own sections (the frontier is ignored for that date)."""
+    frontier: set[str] = set()
     for lec in moment.lectures:
-        end_pos = positions.get(lec.notes_end, -1)
-        if end_pos < 0:
-            continue  # unknown label -- check A already flagged it
-        if lec.effective_cumulative:
-            visible.update(label for label, pos in positions.items() if pos <= end_pos)
-        else:
-            start_pos = positions.get(lec.notes_start, 0) if lec.notes_start else 0
-            visible.update(
-                label for label, pos in positions.items()
-                if start_pos <= pos <= end_pos
-            )
-    return visible
+        if lec.cumulative:
+            frontier |= _expand_labels(lec.sections, toc_data)
+    if moment.lectures:
+        last_lec = moment.lectures[-1]
+        if last_lec.date == moment.date and not last_lec.cumulative:
+            return _expand_labels(last_lec.sections, toc_data)
+    return frontier
 
 
 def _sections_metadata(visible: set[str], toc_data: dict) -> dict[str, bool]:
     """Build the sections metadata dict in document order (chapters then
-    appendices, chapter label before its own sections)."""
+    appendices, chapter label before its own sections).
+
+    A chapter label is set to true when the chapter label itself OR any of
+    its subsection labels are in the visible set -- so the chapter heading
+    is never hidden when content from that chapter is being shown."""
     result: dict[str, bool] = {}
     for group in (toc_data.get("chapters", []), toc_data.get("appendices", [])):
         for chapter in group:
-            if chapter.get("label"):
-                result[chapter["label"]] = chapter["label"] in visible
+            ch_label = chapter.get("label")
+            sec_labels = [s.get("label") for s in chapter.get("sections", []) if s.get("label")]
+            if ch_label:
+                result[ch_label] = ch_label in visible or any(s in visible for s in sec_labels)
             for sec in chapter.get("sections", []):
                 if sec.get("label"):
                     result[sec["label"]] = sec["label"] in visible
@@ -122,7 +139,7 @@ def _visible_chapters(
 def generate_profiles(
     config: CourseConfig,
     toc_data: dict,
-    course_path: Union[str, Path],
+    course_path: str | Path,
 ) -> None:
     """Write one _quarto-<date>.yml profile file per timeline moment into
     course_path. Deletes stale profile files from a prior run first.
@@ -138,10 +155,9 @@ def generate_profiles(
         stale.unlink()
 
     timeline = build_timeline(config)
-    positions = label_positions(toc_data)
 
     for moment in timeline:
-        visible = _visible_sections(moment, positions)
+        visible = _visible_sections(moment, toc_data)
         vis_chapters, vis_appendices = _visible_chapters(visible, toc_data)
         sections = _sections_metadata(visible, toc_data)
         date_str = str(moment.date)

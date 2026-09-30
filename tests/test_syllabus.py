@@ -103,44 +103,52 @@ class TestBuildSyllabusHeader:
 class TestScheduleTopics:
     def test_schedule_section_present_when_lectures_exist(self):
         cfg = _config(lectures=[
-            {"date": "2026-09-28", "notes_end": "sec-ch1-intro"},
+            {"date": "2026-09-28", "sections": ["sec-ch1-intro"]},
         ])
         assert "## Schedule" in _build_syllabus(cfg, _toc())
 
     def test_schedule_absent_when_no_lectures(self):
         assert "## Schedule" not in _build_syllabus(_config(), _toc())
 
-    def test_first_cumulative_lecture_shows_introduction(self):
-        """First cumulative lecture starts at a chapter label → topic = 'Introduction'."""
+    def test_first_section_label_determines_topic(self):
+        """Topic is the title of the first label in sections."""
         cfg = _config(lectures=[
-            {"date": "2026-09-28", "notes_end": "sec-ch1-intro"},
+            {"date": "2026-09-28", "sections": ["sec-ch1-intro"]},
         ])
         content = _build_syllabus(cfg, _toc())
         assert "Introduction" in content
-        # The chapter title should appear as the ### heading, not as the topic
         assert "### Argument Validity" in content
 
-    def test_second_cumulative_lecture_starts_after_prev_end(self):
-        """Second cumulative lecture: topic = label at pos(prev_end)+1."""
+    def test_chapter_label_as_first_section_shows_introduction(self):
+        """When sections[0] is a chapter label → topic = 'Introduction'."""
         cfg = _config(lectures=[
-            {"date": "2026-09-28", "notes_end": "sec-ch1-intro"},  # ends at pos 1
-            {"date": "2026-09-30", "notes_end": "sec-ch1-proof"},  # starts at pos 2 → "Proof"
+            {"date": "2026-09-28", "sections": ["sec-ch1"]},
+        ])
+        content = _build_syllabus(cfg, _toc())
+        assert "Introduction" in content
+        assert "### Argument Validity" in content
+
+    def test_each_lecture_uses_own_first_section_as_topic(self):
+        """Each lecture's topic is derived from its own sections[0]."""
+        cfg = _config(lectures=[
+            {"date": "2026-09-28", "sections": ["sec-ch1-intro"]},
+            {"date": "2026-09-30", "sections": ["sec-ch1-proof"]},
         ])
         content = _build_syllabus(cfg, _toc())
         assert "Proof" in content
 
-    def test_windowed_lecture_uses_notes_start(self):
-        """A windowed lecture (explicit notes_start): topic = title of notes_start."""
+    def test_windowed_lecture_uses_first_section_as_topic(self):
+        """Windowed lectures also use sections[0] as the topic."""
         cfg = _config(lectures=[
-            {"date": "2026-09-28", "notes_end": "sec-ch1-proof",
-             "notes_start": "sec-ch1-intro", "cumulative": False},
+            {"date": "2026-09-28", "sections": ["sec-ch1-intro", "sec-ch1-proof"],
+             "cumulative": False},
         ])
         content = _build_syllabus(cfg, _toc())
         assert "Introduction" in content
 
     def test_date_formatted_short_no_leading_zero(self):
         cfg = _config(lectures=[
-            {"date": "2026-10-08", "notes_end": "sec-ch1-intro"},
+            {"date": "2026-10-08", "sections": ["sec-ch1-intro"]},
         ])
         content = _build_syllabus(cfg, _toc())
         assert "Oct 8" in content
@@ -149,47 +157,35 @@ class TestScheduleTopics:
     def test_explicit_name_overrides_derived_topic(self):
         """lec.name takes precedence over the label-derived topic."""
         cfg = _config(lectures=[
-            {"date": "2026-09-28", "notes_end": "sec-ch1-intro", "name": "Overview"},
+            {"date": "2026-09-28", "sections": ["sec-ch1-intro"], "name": "Overview"},
         ])
         content = _build_syllabus(cfg, _toc())
         assert "Overview" in content
-        # "Introduction" would be the auto-derived topic; "Overview" should replace it
         assert "| Sep 28 | Introduction |" not in content
         assert "| Sep 28 | Overview |" in content
 
     def test_explicit_name_preserves_chapter_grouping(self):
-        """Chapter heading is still derived from the end label even when name is set."""
+        """Chapter heading is still derived from sections[0] even when name is set."""
         cfg = _config(lectures=[
-            {"date": "2026-09-28", "notes_end": "sec-ch1-intro", "name": "Overview"},
+            {"date": "2026-09-28", "sections": ["sec-ch1-intro"], "name": "Overview"},
         ])
         content = _build_syllabus(cfg, _toc())
         assert "### Argument Validity" in content
 
-    def test_unknown_start_label_falls_back_to_dash(self):
-        """If start label can't be resolved (no position found), show '—'."""
-        # First lecture ends at sec-ch1-proof (pos 2); second starts at pos 3 = sec-ch2
-        # but if toc had nothing at pos 3 it would fall back to None → '—'.
-        # Use a toc with no label at pos 3 to trigger the fallback.
-        toc_sparse = {
-            "chapters": [
-                {"path": "ch1.qmd", "label": "sec-ch1", "title": "Ch1",
-                 "sections": [{"label": "sec-ch1-intro", "title": "Intro"}]},
-            ],
-            "appendices": [],
-        }
+    def test_empty_sections_falls_back_to_dash(self):
+        """Lecture with no sections shows '—' as topic."""
         cfg = _config(lectures=[
-            {"date": "2026-09-28", "notes_end": "sec-ch1-intro"},  # ends at pos 1
-            {"date": "2026-09-30", "notes_end": "sec-ch1-intro"},  # starts at pos 2 → nothing
+            {"date": "2026-09-28"},
         ])
-        content = _build_syllabus(cfg, toc_sparse)
+        content = _build_syllabus(cfg, _toc())
         assert "—" in content
 
 
 class TestScheduleChapterGrouping:
     def test_chapter_heading_emitted_when_chapter_changes(self):
         cfg = _config(lectures=[
-            {"date": "2026-09-28", "notes_end": "sec-ch1-proof"},  # ch1
-            {"date": "2026-09-30", "notes_end": "sec-ch2-syntax"},  # ch2
+            {"date": "2026-09-28", "sections": ["sec-ch1-proof"]},
+            {"date": "2026-09-30", "sections": ["sec-ch2-syntax"]},
         ])
         content = _build_syllabus(cfg, _toc())
         assert "### Argument Validity" in content
@@ -197,16 +193,16 @@ class TestScheduleChapterGrouping:
 
     def test_chapter_heading_not_repeated_for_same_chapter(self):
         cfg = _config(lectures=[
-            {"date": "2026-09-28", "notes_end": "sec-ch1-intro"},
-            {"date": "2026-09-30", "notes_end": "sec-ch1-proof"},
+            {"date": "2026-09-28", "sections": ["sec-ch1-intro"]},
+            {"date": "2026-09-30", "sections": ["sec-ch1-proof"]},
         ])
         content = _build_syllabus(cfg, _toc())
         assert content.count("### Argument Validity") == 1
 
     def test_chapter_heading_before_its_lectures(self):
         cfg = _config(lectures=[
-            {"date": "2026-09-28", "notes_end": "sec-ch1-proof"},
-            {"date": "2026-09-30", "notes_end": "sec-ch2-syntax"},
+            {"date": "2026-09-28", "sections": ["sec-ch1-proof"]},
+            {"date": "2026-09-30", "sections": ["sec-ch2-syntax"]},
         ])
         content = _build_syllabus(cfg, _toc())
         ch1_pos = content.index("### Argument Validity")
@@ -219,7 +215,7 @@ class TestScheduleChapterGrouping:
 class TestBuildSyllabusAssignments:
     def test_assignments_section_present_when_assignments_exist(self):
         cfg = _config(
-            lectures=[{"date": "2026-09-28", "notes_end": "sec-ch1-intro"}],
+            lectures=[{"date": "2026-09-28", "sections": ["sec-ch1-intro"]}],
             assignments=[{
                 "name": "Homework 1", "assigned": "2026-09-30",
                 "due": "2026-10-07", "exercises": [],
@@ -232,7 +228,7 @@ class TestBuildSyllabusAssignments:
 
     def test_assignment_name_in_table(self):
         cfg = _config(
-            lectures=[{"date": "2026-09-28", "notes_end": "sec-ch1-intro"}],
+            lectures=[{"date": "2026-09-28", "sections": ["sec-ch1-intro"]}],
             assignments=[{
                 "name": "Homework 1", "assigned": "2026-09-30",
                 "due": "2026-10-07", "exercises": [],
@@ -242,7 +238,7 @@ class TestBuildSyllabusAssignments:
 
     def test_assigned_and_due_dates_formatted(self):
         cfg = _config(
-            lectures=[{"date": "2026-09-28", "notes_end": "sec-ch1-intro"}],
+            lectures=[{"date": "2026-09-28", "sections": ["sec-ch1-intro"]}],
             assignments=[{
                 "name": "Homework 1", "assigned": "2026-09-30",
                 "due": "2026-10-07", "exercises": [],
@@ -265,7 +261,7 @@ class TestGenerateSyllabus:
 
     def test_full_output_has_expected_sections(self, tmp_path):
         cfg = _config(
-            lectures=[{"date": "2026-09-28", "notes_end": "sec-ch1-intro"}],
+            lectures=[{"date": "2026-09-28", "sections": ["sec-ch1-intro"]}],
             assignments=[{
                 "name": "Homework 1", "assigned": "2026-09-30",
                 "due": "2026-10-07", "exercises": [],

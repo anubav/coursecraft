@@ -9,10 +9,9 @@ from here rather than re-implementing validation.
 
 from datetime import date
 from pathlib import Path
-from typing import Optional
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def _validate_label(value: str, field_name: str) -> str:
@@ -25,17 +24,21 @@ def _validate_label(value: str, field_name: str) -> str:
 
 
 class CourseInfo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str
     notes_repo: str
     # which branch of notes_repo this section is built from -- None
     # means the repo's own default branch (typically main). Lets an
     # instructor build off a personal long-lived branch of the notes
     # repo instead of main, without ever needing to merge it back.
-    notes_branch: Optional[str] = None
-    solutions_repo: Optional[str] = None
+    notes_branch: str | None = None
+    solutions_repo: str | None = None
 
 
 class SectionInfo(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     instructor: str
     course_number: str
     term: str
@@ -56,32 +59,23 @@ class SectionInfo(BaseModel):
 
 
 class Lecture(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     date: date
-    name: Optional[str] = None
-    notes_start: Optional[str] = None
-    notes_end: str
-    # None = context-dependent default (see effective_cumulative below),
-    # not "unset -> False". A lecture that just continues from the
-    # frontier defaults to cumulative; an explicit notes_start signals a
-    # deliberately scoped view (e.g. a review lecture) and defaults to
-    # windowed. Either can be overridden explicitly with this field.
-    cumulative: Optional[bool] = None
+    name: str | None = None
+    sections: list[str] = Field(default_factory=list)
+    cumulative: bool = True
 
     @model_validator(mode="after")
     def _check_labels(self) -> "Lecture":
-        if self.notes_start is not None:
-            _validate_label(self.notes_start, "notes_start")
-        _validate_label(self.notes_end, "notes_end")
+        for label in self.sections:
+            _validate_label(label, "sections")
         return self
-
-    @property
-    def effective_cumulative(self) -> bool:
-        if self.cumulative is not None:
-            return self.cumulative
-        return self.notes_start is None
 
 
 class Assignment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     name: str
     assigned: date
     due: date
@@ -124,6 +118,8 @@ class _CourseSectionOnly(BaseModel):
 
 
 class CourseConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     course: CourseInfo
     section: SectionInfo
     lectures: list[Lecture] = Field(default_factory=list)

@@ -9,7 +9,6 @@ from coursecraft.course_checks import (
     check_labels_exist,
     check_exercises_exist,
     check_solutions_exist,
-    check_label_ordering,
     run_course_checks,
 )
 from coursecraft.schema import CourseConfig
@@ -36,8 +35,8 @@ def base_config_dict():
             "end_date": "2026-12-11",
         },
         "lectures": [
-            {"date": "2026-09-28", "notes_end": "sec-ch1-arguments"},
-            {"date": "2026-09-30", "notes_end": "sec-ch1-validity"},
+            {"date": "2026-09-28", "sections": ["sec-ch1-arguments"]},
+            {"date": "2026-09-30", "sections": ["sec-ch1-validity"]},
         ],
         "assignments": [
             {
@@ -82,41 +81,35 @@ class TestCheckLabelsExist:
     def test_all_labels_present_returns_empty(self, base_config, base_toc):
         assert check_labels_exist(base_config, base_toc) == []
 
-    def test_missing_notes_end_reported(self, base_config_dict, base_toc):
+    def test_missing_section_label_reported(self, base_config_dict, base_toc):
         data = copy.deepcopy(base_config_dict)
-        data["lectures"][0]["notes_end"] = "sec-ch1-nonexistent"
+        data["lectures"][0]["sections"] = ["sec-ch1-nonexistent"]
         config = CourseConfig.model_validate(data)
         problems = check_labels_exist(config, base_toc)
         assert len(problems) == 1
         assert "sec-ch1-nonexistent" in problems[0]
-        assert "notes_end" in problems[0]
 
-    def test_missing_notes_start_reported(self, base_config_dict, base_toc):
+    def test_all_sections_per_lecture_checked(self, base_config_dict, base_toc):
         data = copy.deepcopy(base_config_dict)
-        data["lectures"][0]["notes_start"] = "sec-ch1-ghost"
+        data["lectures"][0]["sections"] = ["sec-ch1-arguments", "sec-missing"]
         config = CourseConfig.model_validate(data)
         problems = check_labels_exist(config, base_toc)
         assert len(problems) == 1
-        assert "sec-ch1-ghost" in problems[0]
-        assert "notes_start" in problems[0]
-
-    def test_notes_start_none_not_checked(self, base_config, base_toc):
-        # notes_start=None is the default for most lectures; must not appear
-        assert check_labels_exist(base_config, base_toc) == []
+        assert "sec-missing" in problems[0]
 
     def test_all_lectures_checked_not_just_first(self, base_config_dict, base_toc):
         data = copy.deepcopy(base_config_dict)
-        data["lectures"][0]["notes_end"] = "sec-missing-a"
-        data["lectures"][1]["notes_end"] = "sec-missing-b"
+        data["lectures"][0]["sections"] = ["sec-missing-a"]
+        data["lectures"][1]["sections"] = ["sec-missing-b"]
         config = CourseConfig.model_validate(data)
         problems = check_labels_exist(config, base_toc)
         assert len(problems) == 2
 
     def test_chapter_label_itself_counts(self, base_config_dict, base_toc):
-        """A notes_end pointing at a chapter's own '#' heading label
+        """A section label pointing at a chapter's own '#' heading label
         is valid -- chapter labels appear in toc_data too."""
         data = copy.deepcopy(base_config_dict)
-        data["lectures"][0]["notes_end"] = "sec-ch1"  # chapter label
+        data["lectures"][0]["sections"] = ["sec-ch1"]  # chapter label
         config = CourseConfig.model_validate(data)
         assert check_labels_exist(config, base_toc) == []
 
@@ -135,18 +128,24 @@ class TestCheckLabelsExist:
             ],
         }
         data = copy.deepcopy(base_config_dict)
-        data["lectures"][0]["notes_end"] = "sec-app-a-proofs"
-        data["lectures"][1]["notes_end"] = "sec-app-a-proofs"
+        data["lectures"][0]["sections"] = ["sec-app-a-proofs"]
+        data["lectures"][1]["sections"] = ["sec-app-a-proofs"]
         config = CourseConfig.model_validate(data)
         assert check_labels_exist(config, toc) == []
 
     def test_lecture_name_appears_in_problem(self, base_config_dict, base_toc):
         data = copy.deepcopy(base_config_dict)
         data["lectures"][0]["name"] = "week-01"
-        data["lectures"][0]["notes_end"] = "sec-missing"
+        data["lectures"][0]["sections"] = ["sec-missing"]
         config = CourseConfig.model_validate(data)
         problems = check_labels_exist(config, base_toc)
         assert "week-01" in problems[0]
+
+    def test_empty_sections_no_problems(self, base_config_dict, base_toc):
+        data = copy.deepcopy(base_config_dict)
+        data["lectures"][0]["sections"] = []
+        config = CourseConfig.model_validate(data)
+        assert check_labels_exist(config, base_toc) == []
 
 
 # ---------------------------------------------------------------------------
@@ -255,152 +254,6 @@ class TestCheckSolutionsExist:
 
 
 # ---------------------------------------------------------------------------
-# Check D: label ordering
-# ---------------------------------------------------------------------------
-
-class TestCheckLabelOrdering:
-    def test_forward_order_no_problems(self, base_config, base_toc):
-        assert check_label_ordering(base_config, base_toc) == []
-
-    def test_reversed_order_reported(self, base_config_dict, base_toc):
-        """Swap notes_end so lecture 1 points at sec-ch1-validity (pos 1)
-        and lecture 2 points at sec-ch1-arguments (pos 0) -- a reversal."""
-        data = copy.deepcopy(base_config_dict)
-        data["lectures"][0]["notes_end"] = "sec-ch1-validity"
-        data["lectures"][1]["notes_end"] = "sec-ch1-arguments"
-        config = CourseConfig.model_validate(data)
-        problems = check_label_ordering(config, base_toc)
-        assert len(problems) == 1
-        assert "sec-ch1-arguments" in problems[0]
-
-    def test_equal_positions_allowed(self, base_config_dict, base_toc):
-        """Two lectures pointing at the same notes_end is unusual but valid
-        (a review lecture covering the same endpoint)."""
-        data = copy.deepcopy(base_config_dict)
-        data["lectures"][1]["notes_end"] = "sec-ch1-arguments"  # same as lecture 0
-        config = CourseConfig.model_validate(data)
-        assert check_label_ordering(config, base_toc) == []
-
-    def test_unknown_label_skipped_not_cascaded(self, base_config_dict, base_toc):
-        """A notes_end not in toc (caught by check A) must be skipped in D
-        without resetting the frontier, so later lectures are still checked."""
-        data = copy.deepcopy(base_config_dict)
-        data["lectures"].append({
-            "date": "2026-10-02",
-            "notes_end": "sec-ch1-ghost",  # not in toc
-        })
-        data["lectures"].append({
-            "date": "2026-10-05",
-            "notes_end": "sec-ch1-arguments",  # earlier than validity
-        })
-        config = CourseConfig.model_validate(data)
-        problems = check_label_ordering(config, base_toc)
-        # lecture-04 (sec-ch1-arguments, pos 0) is before lecture-02's
-        # frontier (sec-ch1-validity, pos 1). lecture-03 is skipped.
-        assert len(problems) == 1
-        assert "sec-ch1-arguments" in problems[0]
-
-    def test_ordering_across_chapters(self):
-        """Checks that position spans multiple chapters correctly."""
-        toc = {
-            "chapters": [
-                {
-                    "path": "ch1.qmd",
-                    "label": "sec-ch1",
-                    "title": "Ch1",
-                    "sections": [
-                        {"label": "sec-ch1-a", "title": "A"},
-                        {"label": "sec-ch1-b", "title": "B"},
-                    ],
-                },
-                {
-                    "path": "ch2.qmd",
-                    "label": "sec-ch2",
-                    "title": "Ch2",
-                    "sections": [
-                        {"label": "sec-ch2-a", "title": "A"},
-                    ],
-                },
-            ],
-            "appendices": [],
-        }
-        config_dict = {
-            "course": {
-                "title": "Test",
-                "notes_repo": "https://example.com/repo.git",
-            },
-            "section": {
-                "instructor": "J",
-                "course_number": "X 100",
-                "term": "Fall 2026",
-                "location": "Room 1",
-                "meeting_times": "MWF",
-                "start_date": "2026-09-01",
-                "end_date": "2026-12-31",
-            },
-            "lectures": [
-                {"date": "2026-09-01", "notes_end": "sec-ch1-b"},
-                {"date": "2026-09-03", "notes_end": "sec-ch2-a"},
-            ],
-        }
-        config = CourseConfig.model_validate(config_dict)
-        assert check_label_ordering(config, toc) == []
-
-    def test_going_back_across_chapters_reported(self):
-        toc = {
-            "chapters": [
-                {
-                    "path": "ch1.qmd", "label": "sec-ch1", "title": "Ch1",
-                    "sections": [{"label": "sec-ch1-a", "title": "A"}],
-                },
-                {
-                    "path": "ch2.qmd", "label": "sec-ch2", "title": "Ch2",
-                    "sections": [{"label": "sec-ch2-a", "title": "A"}],
-                },
-            ],
-            "appendices": [],
-        }
-        config_dict = {
-            "course": {
-                "title": "Test",
-                "notes_repo": "https://example.com/repo.git",
-            },
-            "section": {
-                "instructor": "J",
-                "course_number": "X 100",
-                "term": "Fall 2026",
-                "location": "Room 1",
-                "meeting_times": "MWF",
-                "start_date": "2026-09-01",
-                "end_date": "2026-12-31",
-            },
-            "lectures": [
-                {"date": "2026-09-01", "notes_end": "sec-ch2-a"},
-                {"date": "2026-09-03", "notes_end": "sec-ch1-a"},  # backwards
-            ],
-        }
-        config = CourseConfig.model_validate(config_dict)
-        problems = check_label_ordering(config, toc)
-        assert len(problems) == 1
-        assert "sec-ch1-a" in problems[0]
-
-    def test_lecture_name_in_problem(self, base_config_dict, base_toc):
-        data = copy.deepcopy(base_config_dict)
-        data["lectures"][0]["notes_end"] = "sec-ch1-validity"
-        data["lectures"][1]["name"] = "review"
-        data["lectures"][1]["notes_end"] = "sec-ch1-arguments"
-        config = CourseConfig.model_validate(data)
-        problems = check_label_ordering(config, base_toc)
-        assert "review" in problems[0]
-
-    def test_empty_lectures_no_problems(self, base_config_dict):
-        data = copy.deepcopy(base_config_dict)
-        data["lectures"] = []
-        config = CourseConfig.model_validate(data)
-        assert check_label_ordering(config, {"chapters": [], "appendices": []}) == []
-
-
-# ---------------------------------------------------------------------------
 # run_all_checks integration
 # ---------------------------------------------------------------------------
 
@@ -413,13 +266,12 @@ class TestRunCourseChecks:
             "check_labels_exist",
             "check_exercises_exist",
             "check_solutions_exist",
-            "check_label_ordering",
         }
         assert all(v == [] for v in results.values())
 
     def test_multiple_failures_all_reported(self, base_config_dict, base_toc, tmp_path):
         data = copy.deepcopy(base_config_dict)
-        data["lectures"][0]["notes_end"] = "sec-ch1-ghost"  # A failure
+        data["lectures"][0]["sections"] = ["sec-ch1-ghost"]  # A failure
         config = CourseConfig.model_validate(data)
         # exercises dir missing -> B failure too
         results = run_course_checks(config, tmp_path, base_toc)

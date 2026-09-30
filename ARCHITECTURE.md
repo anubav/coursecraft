@@ -48,9 +48,9 @@ the same file. Splitting a chapter into many small files would break
 this for ordinary hand-editing.
 
 The granularity this creates: a reveal/hide decision can only happen at
-a `##` heading boundary (a whole labeled section), never mid-file. A
-lecture's `notes_end` therefore always names a `{#sec-...}` label, never
-an arbitrary point in the text.
+a `##` heading boundary (a whole labeled section), never mid-file. Each
+label in a lecture's `sections` list therefore always names a
+`{#sec-...}` label, never an arbitrary point in the text.
 
 ## Label convention: `sec-<chapter-slug>-<heading-slug>`
 
@@ -172,20 +172,26 @@ now catches this class of mistake before either happens.
 
 ## Lecture reveal: cumulative by default, windowed by explicit choice
 
-`notes_start` left blank means "continue from the frontier" (the
-furthest `notes_end` reached by any earlier lecture) and defaults to
-**cumulative** reveal -- once introduced, a section stays visible
-going forward, so students can always review earlier material.
+Each lecture carries `sections: list[str]` -- an explicit list of
+section labels to show -- and `cumulative: bool = True`.
 
-An **explicit** `notes_start` signals a deliberately scoped view (e.g.
-a review lecture revisiting material out of order) and defaults to
-**windowed** reveal instead -- only that lecture's own range is shown,
-so it doesn't have to also imply "reveal everything up to here."
-`cumulative: true`/`false` on a lecture always overrides the default
-either way.
+`cumulative: true` (the default) adds those labels to the running
+**frontier**: the ever-growing set of sections visible to students.
+Once a section enters the frontier it stays visible in every subsequent
+profile, so students can always review earlier material.
 
-The frontier only ever **advances**, never retreats -- a windowed
-review lecture doesn't reset what later lectures continue from.
+`cumulative: false` signals a deliberately scoped view (e.g. a review
+lecture revisiting material out of order): **only** the labels in
+`sections` are shown for that profile, ignoring the frontier entirely.
+
+The frontier only ever **advances**, never retreats -- a
+`cumulative: false` review lecture doesn't reset what later lectures
+continue from.
+
+A chapter-level label in `sections` (the bare `sec-<slug>` form) is
+automatically expanded to include all of that chapter's subsection
+labels by `_expand_labels` in `profiles.py`, so a lecture that covers
+an entire chapter needs only the one top-level label.
 
 ## Homework/solutions: two files, not a metadata flag
 
@@ -255,16 +261,13 @@ start rather than retrofitted after a real access-control question.
   triggering solutions), requiring a real backend (e.g. Django)
   injecting into the Quarto output. Not designed yet, but the schema's
   `due` field is already positioned to support it without rework.
-- **Label-ordering sanity check.** ~~Deferred.~~ Now implemented as
-  check D in `course_checks.py`. Each label's position is computed by
-  `label_positions()` in `toc.py` (a sequential walk of the toc tree,
-  chapter labels before their sections, chapters before appendices) and
-  stored in a dict; check D compares each lecture's `notes_end` position
-  against the previous lecture's. One intentional subtlety: if lecture N
-  is out of order, `prev_pos` is still advanced to N's end position, so
-  lecture N+1 is compared against N (not against N-1 again) -- without
-  this, a single real error cascades into spurious errors for every
-  subsequent lecture.
+- **Label-ordering sanity check.** ~~Deferred.~~ ~~Now implemented as
+  check D in `course_checks.py`.~~ **Removed.** The sections-based
+  schema makes a sequential ordering check meaningless: `sections` is
+  an explicit list, not an interval, so there is no inherent ordering
+  to enforce. Check A (label existence) still validates that every
+  label in `lec.sections` actually exists in the notes, using
+  `label_positions()` from `toc.py`.
 - **`coursecraft sync-back`**, automating branch -> commit -> push ->
   open-PR for returning an edited `notes/` to the master repo at
   term's end. Plain git already does this (practiced by hand earlier
@@ -427,13 +430,11 @@ spinner over a silent wait wasn't worth the machinery.
 appendix -- exercises/inserts are never touched, since they have no
 independent visibility of their own) in a flat
 `:::{.content-hidden unless-meta="sections.<label>"}` div. Deliberately
-**every** labeled section, not just ones some lecture names as its own
-`notes_end`: a lecture's cumulative frontier can pass through a
-section no lecture ever explicitly names (lecture 1 ends at section C,
-lecture 2 ends at section E -- section D becomes visible with lecture
-2 even though nothing names D itself), so instrumentation has to give
-every section a `sections.*` hook regardless of whether `course.yml`
-mentions it. This is what makes `instrument()` a pure function of the
+**every** labeled section, not just ones some lecture names in its
+`sections` list: instrumentation gives every section a `sections.*`
+hook regardless of whether `course.yml` ever mentions it -- a section
+omitted from every lecture's list simply has its hook set `false` in
+every profile and remains hidden. This is what makes `instrument()` a pure function of the
 notes content alone, with **no dependency on `course.yml` at all** --
 the metadata *values* (which hooks are true for a given profile) are
 decided later, during profile generation.
@@ -532,7 +533,8 @@ overwrites: it's 100% derived from `notes/`, so there's nothing to
 protect, and rerunning it after editing `notes/` should just produce
 a fresh, correct file every time. `update` will call the same
 `build_toc()`/`write_toc_yaml()` functions as a side effect of its own
-label-position validation (the D check), so `toc.yml` stays fresh
+validation step (check A uses `label_positions()` to verify that every
+label in `lec.sections` exists in the notes), so `toc.yml` stays fresh
 automatically on every `update` run without `update` needing to read
 it back as a dependency -- `coursecraft toc` remains useful standalone
 for the one moment that matters between `update` runs: refreshing the
@@ -562,7 +564,7 @@ The ten steps:
 2. **Write toc.yml** -- side effect of step 1; used externally by the
    course-yaml wizard. `update` itself uses the in-memory `toc_data`
    for all subsequent steps, never reads toc.yml back.
-3. **Validate** -- `CourseConfig.from_yaml` + A/B/C/D course checks.
+3. **Validate** -- `CourseConfig.from_yaml` + A/B/C course checks.
    Abort before touching course/ if anything is wrong.
 4. **Unlock** -- `chmod 0o644` everything in `course/`. No-op on first
    run (files already writable); removes the read-only protection from
@@ -616,18 +618,24 @@ are unnumbered via `# Homework N {.unnumbered}` -- no `title:` in
 frontmatter, which would create a duplicate heading and break Quarto's
 unnumbered detection.
 
+`_sections_metadata(visible, toc_data)` builds the per-profile
+`metadata: sections:` dict. It automatically sets any chapter label to
+`true` whenever at least one of its subsection labels is in the visible
+set -- so the chapter's own `##`-heading wrapper (instrumented the same
+way as any section) is never hidden while content from that chapter is
+being shown.
+
 ## Syllabus: schedule grouped by chapter
 
 `syllabus.py` builds `course/index.qmd` with a course-info table, a
 schedule section (if any lectures are defined), and an assignments
 table. The schedule groups lectures under `### Chapter Title` headings
-that change whenever the chapter of the current lecture's start label
-changes. The start label for cumulative lectures is the first label
-after the previous lecture's `notes_end`; for windowed lectures it's
-the explicit `notes_start`. A chapter-level start label shows
-"Introduction" rather than repeating the chapter title that already
-appears in the `###` heading. `Lecture.name` overrides the derived
-topic when set.
+that change whenever the chapter of the current lecture's first section
+label changes. The topic for each lecture is derived from
+`lec.sections[0]` (the first label in the lecture's `sections` list).
+A chapter-level first label shows "Introduction" rather than repeating
+the chapter title that already appears in the `###` heading.
+`Lecture.name` overrides the derived topic when set.
 
 ## Planned extensions
 
@@ -682,7 +690,7 @@ src/coursecraft/
 ├── fetch.py        # fetch-notes: clone → branch → push → pre-commit install
 ├── init.py         # init: scaffold course/ git repo + placeholder course.yml
 ├── instrument.py   # wraps ## sections in content-hidden divs
-├── toc.py          # build_toc() ordered by notes/_quarto.yml; label_positions()
+├── toc.py          # build_toc() ordered by notes/_quarto.yml; label_positions() used by check A
 ├── hw.py           # generate hw-NN.qmd / hw-NN-solutions.qmd per assignment
 ├── profiles.py     # generate _quarto-<date>.yml per timeline moment
 ├── syllabus.py     # generate course/index.qmd

@@ -4,7 +4,6 @@ from datetime import date
 from pathlib import Path
 
 from .schema import CourseConfig, Lecture
-from .toc import label_positions
 
 
 def _short_date(d: date) -> str:
@@ -41,26 +40,6 @@ def _label_chapter(toc_data: dict) -> dict[str, tuple[str, str]]:
     return result
 
 
-def _positions_by_pos(positions: dict[str, int]) -> dict[int, str]:
-    """Invert label_positions: position → label."""
-    return {pos: label for label, pos in positions.items()}
-
-
-def _lecture_start_label(
-    lec: Lecture,
-    prev_end_pos: int,
-    pos_to_label: dict[int, str],
-) -> str | None:
-    """The label where this lecture begins (for display purposes).
-
-    Windowed lectures: explicitly declared notes_start.
-    Cumulative lectures: first label after the previous lecture's end
-    (prev_end_pos == -1 means no previous lecture, so start at pos 0)."""
-    if lec.notes_start:
-        return lec.notes_start
-    return pos_to_label.get(prev_end_pos + 1)
-
-
 def _md_table(headers: list[str], rows: list[list[str]]) -> str:
     """Render a left-aligned Markdown table."""
     col_count = len(headers)
@@ -81,8 +60,6 @@ def _schedule_parts(config: CourseConfig, toc_data: dict) -> list[str]:
 
     titles = _label_titles(toc_data)
     ch_map = _label_chapter(toc_data)
-    positions = label_positions(toc_data)
-    pos_to_label = _positions_by_pos(positions)
 
     chapter_labels = {
         ch.get("label")
@@ -91,25 +68,21 @@ def _schedule_parts(config: CourseConfig, toc_data: dict) -> list[str]:
         if ch.get("label")
     }
 
-    # Pair each lecture with its start label and chapter.
-    # prev_end_pos tracks where the previous lecture left off.
-    prev_end_pos = -1
-    lecture_items: list[tuple[Lecture, str, str, str]] = []
-    # (lec, start_label, start_title, chapter_title)
+    lecture_items: list[tuple[Lecture, str, str]] = []
+    # (lec, start_title, chapter_title)
 
     for lec in config.lectures:
-        start_label = _lecture_start_label(lec, prev_end_pos, pos_to_label)
+        first_label = lec.sections[0] if lec.sections else None
         if lec.name:
             start_title = lec.name
-        elif start_label is None:
+        elif first_label is None:
             start_title = "—"
-        elif start_label in chapter_labels:
+        elif first_label in chapter_labels:
             start_title = "Introduction"
         else:
-            start_title = titles.get(start_label, start_label)
-        _, ch_title = ch_map.get(start_label, ("", "")) if start_label else ("", "")
-        lecture_items.append((lec, start_label, start_title, ch_title))
-        prev_end_pos = positions.get(lec.notes_end, prev_end_pos)
+            start_title = titles.get(first_label, first_label)
+        _, ch_title = ch_map.get(first_label, ("", "")) if first_label else ("", "")
+        lecture_items.append((lec, start_title, ch_title))
 
     parts: list[str] = ["", "## Schedule"]
     current_chapter = None
@@ -124,7 +97,7 @@ def _schedule_parts(config: CourseConfig, toc_data: dict) -> list[str]:
             parts.append(_md_table(["Date", "Topic"], chapter_rows))
             chapter_rows.clear()
 
-    for lec, _start_label, start_title, ch_title in lecture_items:
+    for lec, start_title, ch_title in lecture_items:
         if ch_title != current_chapter:
             _flush(current_chapter or "")
             current_chapter = ch_title

@@ -8,11 +8,11 @@ from coursecraft.profiles import (
     build_timeline,
     generate_profiles,
     _visible_sections,
+    _expand_labels,
     _sections_metadata,
     _visible_chapters,
 )
 from coursecraft.schema import CourseConfig
-from coursecraft.toc import label_positions
 
 
 def _config(lectures=None, assignments=None) -> CourseConfig:
@@ -61,12 +61,12 @@ def _base_toc() -> dict:
     }
 
 
-def _lec(d: str, end: str = "sec-ch1-intro", start: str = None, cumulative: bool = None) -> dict:
-    lec = {"date": d, "notes_end": end}
-    if start:
-        lec["notes_start"] = start
-    if cumulative is not None:
-        lec["cumulative"] = cumulative
+def _lec(d: str, sections=None, cumulative: bool = True) -> dict:
+    lec: dict = {"date": d}
+    if sections is not None:
+        lec["sections"] = sections
+    if not cumulative:
+        lec["cumulative"] = False
     return lec
 
 
@@ -86,7 +86,7 @@ class TestBuildTimelineEventDates:
         assert build_timeline(_config()) == []
 
     def test_lecture_dates_become_moments(self):
-        cfg = _config(lectures=[_lec("2027-01-06"), _lec("2027-01-08", "sec-ch1-args")])
+        cfg = _config(lectures=[_lec("2027-01-06"), _lec("2027-01-08", ["sec-ch1-args"])])
         moments = build_timeline(cfg)
         assert [m.date for m in moments] == [date(2027, 1, 6), date(2027, 1, 8)]
 
@@ -116,7 +116,7 @@ class TestBuildTimelineEventDates:
 
     def test_same_date_events_collapse_to_one_moment(self):
         cfg = _config(
-            lectures=[_lec("2027-01-08", "sec-ch1-args")],
+            lectures=[_lec("2027-01-08", ["sec-ch1-args"])],
             assignments=[_hw("HW1", "2027-01-08", "2027-01-15")],
         )
         moments = build_timeline(cfg)
@@ -124,7 +124,7 @@ class TestBuildTimelineEventDates:
 
     def test_moments_sorted_ascending(self):
         cfg = _config(
-            lectures=[_lec("2027-01-13", "sec-ch1-validity"), _lec("2027-01-06")],
+            lectures=[_lec("2027-01-13", ["sec-ch1-validity"]), _lec("2027-01-06")],
             assignments=[_hw("HW1", "2027-01-08", "2027-01-20")],
         )
         moments = build_timeline(cfg)
@@ -135,8 +135,8 @@ class TestBuildTimelineLectures:
     def test_moment_includes_all_lectures_up_to_its_date(self):
         cfg = _config(lectures=[
             _lec("2027-01-06"),
-            _lec("2027-01-08", "sec-ch1-args"),
-            _lec("2027-01-13", "sec-ch1-validity"),
+            _lec("2027-01-08", ["sec-ch1-args"]),
+            _lec("2027-01-13", ["sec-ch1-validity"]),
         ])
         moments = build_timeline(cfg)
         jan8 = next(m for m in moments if m.date == date(2027, 1, 8))
@@ -144,13 +144,13 @@ class TestBuildTimelineLectures:
         assert all(lec.date <= date(2027, 1, 8) for lec in jan8.lectures)
 
     def test_first_moment_has_only_first_lecture(self):
-        cfg = _config(lectures=[_lec("2027-01-06"), _lec("2027-01-08", "sec-ch1-args")])
+        cfg = _config(lectures=[_lec("2027-01-06"), _lec("2027-01-08", ["sec-ch1-args"])])
         moments = build_timeline(cfg)
         assert len(moments[0].lectures) == 1
 
     def test_lectures_in_date_order_within_moment(self):
         cfg = _config(lectures=[
-            _lec("2027-01-08", "sec-ch1-args"),
+            _lec("2027-01-08", ["sec-ch1-args"]),
             _lec("2027-01-06"),
         ])
         moments = build_timeline(cfg)
@@ -160,7 +160,7 @@ class TestBuildTimelineLectures:
     def test_assignment_only_moment_has_no_lectures_before_first_lecture(self):
         """Assigned date precedes first lecture: no lectures in that moment."""
         cfg = _config(
-            lectures=[_lec("2027-01-10", "sec-ch1-args")],
+            lectures=[_lec("2027-01-10", ["sec-ch1-args"])],
             assignments=[_hw("HW1", "2027-01-06", "2027-01-20")],
         )
         moments = build_timeline(cfg)
@@ -171,7 +171,7 @@ class TestBuildTimelineLectures:
 class TestBuildTimelineHwFiles:
     def test_hw_not_in_files_before_assigned(self):
         cfg = _config(
-            lectures=[_lec("2027-01-06")],
+            lectures=[_lec("2027-01-06", ["sec-ch1-intro"])],
             assignments=[_hw("HW1", "2027-01-08", "2027-01-15")],
         )
         moments = build_timeline(cfg)
@@ -180,7 +180,7 @@ class TestBuildTimelineHwFiles:
 
     def test_hw_file_appears_on_assigned_date(self):
         cfg = _config(
-            lectures=[_lec("2027-01-06")],
+            lectures=[_lec("2027-01-06", ["sec-ch1-intro"])],
             assignments=[_hw("HW1", "2027-01-08", "2027-01-15")],
         )
         moments = build_timeline(cfg)
@@ -189,7 +189,7 @@ class TestBuildTimelineHwFiles:
 
     def test_solutions_replace_hw_after_due_date(self):
         cfg = _config(
-            lectures=[_lec("2027-01-06")],
+            lectures=[_lec("2027-01-06", ["sec-ch1-intro"])],
             assignments=[_hw("HW1", "2027-01-08", "2027-01-15", show_solutions=True)],
         )
         moments = build_timeline(cfg)
@@ -199,7 +199,7 @@ class TestBuildTimelineHwFiles:
 
     def test_hw_stays_without_solutions_when_show_solutions_false(self):
         cfg = _config(
-            lectures=[_lec("2027-01-06")],
+            lectures=[_lec("2027-01-06", ["sec-ch1-intro"])],
             assignments=[_hw("HW1", "2027-01-08", "2027-01-15", show_solutions=False)],
         )
         # due date doesn't trigger a moment, so check the assigned-date moment
@@ -210,7 +210,7 @@ class TestBuildTimelineHwFiles:
 
     def test_exam_uses_exam_prefix(self):
         cfg = _config(
-            lectures=[_lec("2027-01-06")],
+            lectures=[_lec("2027-01-06", ["sec-ch1-intro"])],
             assignments=[_hw("Midterm", "2027-02-01", "2027-02-01", is_exam=True)],
         )
         moments = build_timeline(cfg)
@@ -219,7 +219,7 @@ class TestBuildTimelineHwFiles:
 
     def test_separate_counters_for_hw_and_exam(self):
         cfg = _config(
-            lectures=[_lec("2027-01-06")],
+            lectures=[_lec("2027-01-06", ["sec-ch1-intro"])],
             assignments=[
                 _hw("HW1", "2027-01-08", "2027-01-15"),
                 _hw("Midterm", "2027-02-01", "2027-02-01", is_exam=True),
@@ -234,7 +234,7 @@ class TestBuildTimelineHwFiles:
 
     def test_hw_files_in_assignment_order(self):
         cfg = _config(
-            lectures=[_lec("2027-01-06")],
+            lectures=[_lec("2027-01-06", ["sec-ch1-intro"])],
             assignments=[
                 _hw("HW1", "2027-01-08", "2027-01-15"),
                 _hw("HW2", "2027-01-08", "2027-01-22"),
@@ -248,7 +248,7 @@ class TestBuildTimelineHwFiles:
         """An assignment assigned and due on the same date with show_solutions=True:
         only one moment, and it immediately shows solutions."""
         cfg = _config(
-            lectures=[_lec("2027-01-06")],
+            lectures=[_lec("2027-01-06", ["sec-ch1-intro"])],
             assignments=[_hw("HW1", "2027-01-15", "2027-01-15", show_solutions=True)],
         )
         moments = build_timeline(cfg)
@@ -256,74 +256,114 @@ class TestBuildTimelineHwFiles:
         assert "hw-01-solutions.qmd" in jan15.hw_files
 
 
-class TestVisibleSections:
-    def test_cumulative_lecture_reveals_up_to_end(self):
+class TestExpandLabels:
+    def test_subsection_label_returned_as_is(self):
         toc = _base_toc()
-        positions = label_positions(toc)
-        cfg = _config(lectures=[_lec("2027-01-06", "sec-ch1-intro")])
+        assert _expand_labels(["sec-ch1-intro"], toc) == {"sec-ch1-intro"}
+
+    def test_chapter_label_expands_to_all_subsections(self):
+        toc = _base_toc()
+        result = _expand_labels(["sec-ch1"], toc)
+        assert result == {"sec-ch1", "sec-ch1-intro", "sec-ch1-arguments"}
+
+    def test_multiple_labels_unioned(self):
+        toc = _base_toc()
+        result = _expand_labels(["sec-ch1-intro", "sec-ch2-basics"], toc)
+        assert result == {"sec-ch1-intro", "sec-ch2-basics"}
+
+    def test_empty_sections_returns_empty_set(self):
+        assert _expand_labels([], _base_toc()) == set()
+
+    def test_appendix_chapter_label_also_expanded(self):
+        toc = {
+            "chapters": [],
+            "appendices": [
+                {"label": "sec-app-a", "path": "app-a.qmd", "title": "A",
+                 "sections": [{"label": "sec-app-a-proofs", "title": "Proofs"}]},
+            ],
+        }
+        result = _expand_labels(["sec-app-a"], toc)
+        assert result == {"sec-app-a", "sec-app-a-proofs"}
+
+
+class TestVisibleSections:
+    def test_cumulative_lecture_reveals_listed_sections(self):
+        toc = _base_toc()
+        cfg = _config(lectures=[_lec("2027-01-06", ["sec-ch1-intro"])])
         moment = build_timeline(cfg)[0]
-        visible = _visible_sections(moment, positions)
-        assert "sec-ch1" in visible
+        visible = _visible_sections(moment, toc)
         assert "sec-ch1-intro" in visible
         assert "sec-ch1-arguments" not in visible
         assert "sec-ch2" not in visible
 
-    def test_cumulative_lecture_at_end_reveals_all(self):
+    def test_chapter_label_in_sections_expands_to_all_subsections(self):
         toc = _base_toc()
-        positions = label_positions(toc)
-        cfg = _config(lectures=[_lec("2027-01-06", "sec-ch2-basics")])
+        cfg = _config(lectures=[_lec("2027-01-06", ["sec-ch1"])])
         moment = build_timeline(cfg)[0]
-        visible = _visible_sections(moment, positions)
-        assert visible == {"sec-ch1", "sec-ch1-intro", "sec-ch1-arguments",
-                           "sec-ch2", "sec-ch2-basics"}
-
-    def test_windowed_lecture_reveals_only_its_range(self):
-        toc = _base_toc()
-        positions = label_positions(toc)
-        cfg = _config(lectures=[
-            _lec("2027-01-06", "sec-ch1-intro"),                           # cumulative: sec-ch1, sec-ch1-intro
-            _lec("2027-01-08", end="sec-ch2-basics",
-                 start="sec-ch2", cumulative=False),                       # windowed: sec-ch2, sec-ch2-basics
-        ])
-        moment = build_timeline(cfg)[1]  # Jan 8
-        visible = _visible_sections(moment, positions)
+        visible = _visible_sections(moment, toc)
         assert "sec-ch1" in visible
         assert "sec-ch1-intro" in visible
-        assert "sec-ch1-arguments" not in visible   # gap left by windowed
+        assert "sec-ch1-arguments" in visible
+        assert "sec-ch2" not in visible
+
+    def test_multiple_cumulative_lectures_build_frontier(self):
+        toc = _base_toc()
+        cfg = _config(lectures=[
+            _lec("2027-01-06", ["sec-ch1-intro"]),
+            _lec("2027-01-08", ["sec-ch2-basics"]),
+        ])
+        moment = build_timeline(cfg)[1]  # Jan 8
+        visible = _visible_sections(moment, toc)
+        assert "sec-ch1-intro" in visible
+        assert "sec-ch2-basics" in visible
+
+    def test_windowed_lecture_shows_only_own_sections(self):
+        """Windowed lecture at the moment's date: returns only its own sections."""
+        toc = _base_toc()
+        cfg = _config(lectures=[
+            _lec("2027-01-06", ["sec-ch1-intro"]),           # cumulative → frontier
+            _lec("2027-01-08", ["sec-ch2", "sec-ch2-basics"], cumulative=False),  # windowed
+        ])
+        moment = build_timeline(cfg)[1]  # Jan 8
+        visible = _visible_sections(moment, toc)
+        # frontier (sec-ch1-intro) is ignored; only windowed lecture's sections shown
+        assert "sec-ch1-intro" not in visible
         assert "sec-ch2" in visible
         assert "sec-ch2-basics" in visible
 
-    def test_later_cumulative_fills_gaps_from_windowed(self):
+    def test_windowed_lecture_does_not_change_frontier(self):
+        """After a windowed lecture, the next cumulative lecture's frontier
+        does not include the windowed lecture's sections."""
         toc = _base_toc()
-        positions = label_positions(toc)
         cfg = _config(lectures=[
-            _lec("2027-01-06", "sec-ch1-intro"),
-            _lec("2027-01-08", end="sec-ch2-basics",
-                 start="sec-ch2", cumulative=False),
-            _lec("2027-01-13", "sec-ch2-basics"),   # cumulative: fills sec-ch1-arguments gap
+            _lec("2027-01-06", ["sec-ch1-intro"]),
+            _lec("2027-01-08", ["sec-ch2-basics"], cumulative=False),  # windowed
+            _lec("2027-01-13", ["sec-ch1-arguments"]),                  # cumulative
         ])
         moment = build_timeline(cfg)[2]  # Jan 13
-        visible = _visible_sections(moment, positions)
-        assert "sec-ch1-arguments" in visible        # gap now filled
+        visible = _visible_sections(moment, toc)
+        # frontier = sec-ch1-intro (Jan 6) + sec-ch1-arguments (Jan 13)
+        assert "sec-ch1-intro" in visible
+        assert "sec-ch1-arguments" in visible
+        # windowed Jan 8 lecture did not persist into frontier
+        assert "sec-ch2-basics" not in visible
 
-    def test_unknown_label_skipped_gracefully(self):
+    def test_empty_sections_lecture_contributes_nothing(self):
         toc = _base_toc()
-        positions = label_positions(toc)
-        cfg = _config(lectures=[_lec("2027-01-06", "sec-does-not-exist")])
+        cfg = _config(lectures=[_lec("2027-01-06")])  # no sections
         moment = build_timeline(cfg)[0]
-        visible = _visible_sections(moment, positions)
-        assert visible == set()   # unknown end label → nothing revealed
+        visible = _visible_sections(moment, toc)
+        assert visible == set()
 
     def test_no_lectures_in_moment_means_nothing_visible(self):
         toc = _base_toc()
-        positions = label_positions(toc)
         cfg = _config(
-            lectures=[_lec("2027-01-10", "sec-ch1-intro")],
+            lectures=[_lec("2027-01-10", ["sec-ch1-intro"])],
             assignments=[_hw("HW1", "2027-01-06", "2027-01-20")],
         )
         moments = build_timeline(cfg)
         jan6 = next(m for m in moments if m.date == date(2027, 1, 6))
-        visible = _visible_sections(jan6, positions)
+        visible = _visible_sections(jan6, toc)
         assert visible == set()
 
 
@@ -343,11 +383,25 @@ class TestSectionsMetadata:
         assert result["sec-ch1"] is True
         assert result["sec-ch1-intro"] is True
 
-    def test_invisible_labels_are_false(self):
+    def test_invisible_section_labels_are_false(self):
         toc = _base_toc()
-        result = _sections_metadata({"sec-ch1", "sec-ch1-intro"}, toc)
+        result = _sections_metadata({"sec-ch1-intro"}, toc)
         assert result["sec-ch1-arguments"] is False
         assert result["sec-ch2"] is False
+        assert result["sec-ch2-basics"] is False
+
+    def test_chapter_label_auto_true_when_subsection_visible(self):
+        """Chapter heading is shown whenever any of its subsections are visible,
+        even if the chapter label itself is not in the visible set."""
+        toc = _base_toc()
+        result = _sections_metadata({"sec-ch1-intro"}, toc)
+        assert result["sec-ch1"] is True   # auto-shown because sec-ch1-intro is visible
+
+    def test_chapter_label_false_when_no_subsections_visible(self):
+        toc = _base_toc()
+        result = _sections_metadata({"sec-ch2-basics"}, toc)
+        assert result["sec-ch1"] is False  # no ch1 subsections visible
+        assert result["sec-ch2"] is True   # sec-ch2-basics is visible
 
     def test_output_in_document_order(self):
         toc = _base_toc()
@@ -417,7 +471,7 @@ class TestVisibleChapters:
 class TestGenerateProfiles:
     def test_profile_file_written_per_moment(self, tmp_path):
         toc = _base_toc()
-        cfg = _config(lectures=[_lec("2027-01-06"), _lec("2027-01-08", "sec-ch1-arguments")])
+        cfg = _config(lectures=[_lec("2027-01-06"), _lec("2027-01-08", ["sec-ch1-arguments"])])
         generate_profiles(cfg, toc, tmp_path)
         assert (tmp_path / "_quarto-2027-01-06.yml").exists()
         assert (tmp_path / "_quarto-2027-01-08.yml").exists()
@@ -431,34 +485,37 @@ class TestGenerateProfiles:
 
     def test_profile_sections_metadata_correct(self, tmp_path):
         toc = _base_toc()
-        cfg = _config(lectures=[_lec("2027-01-06", "sec-ch1-intro")])
+        cfg = _config(lectures=[_lec("2027-01-06", ["sec-ch1-intro"])])
         generate_profiles(cfg, toc, tmp_path)
         data = yaml.safe_load((tmp_path / "_quarto-2027-01-06.yml").read_text())
         sections = data["metadata"]["sections"]
         assert sections["sec-ch1-intro"] is True
+        assert sections["sec-ch1"] is True   # auto-shown: subsection visible
         assert sections["sec-ch1-arguments"] is False
 
     def test_profile_contains_visible_chapters(self, tmp_path):
         toc = _base_toc()
-        cfg = _config(lectures=[_lec("2027-01-06", "sec-ch1-intro")])
+        cfg = _config(lectures=[_lec("2027-01-06", ["sec-ch1-intro"])])
         generate_profiles(cfg, toc, tmp_path)
         data = yaml.safe_load((tmp_path / "_quarto-2027-01-06.yml").read_text())
         assert "chapters/ch1.qmd" in data["book"]["chapters"]
         assert "chapters/ch2.qmd" not in data["book"]["chapters"]
 
-    def test_chapter_not_in_profile_when_nothing_visible(self, tmp_path):
+    def test_chapter_label_expands_to_all_subsections_in_profile(self, tmp_path):
         toc = _base_toc()
-        cfg = _config(lectures=[_lec("2027-01-06", "sec-ch2-basics")])
+        cfg = _config(lectures=[_lec("2027-01-06", ["sec-ch1"])])
         generate_profiles(cfg, toc, tmp_path)
         data = yaml.safe_load((tmp_path / "_quarto-2027-01-06.yml").read_text())
-        # Both chapters are visible when end is sec-ch2-basics (cumulative)
-        assert "chapters/ch1.qmd" in data["book"]["chapters"]
-        assert "chapters/ch2.qmd" in data["book"]["chapters"]
+        sections = data["metadata"]["sections"]
+        assert sections["sec-ch1"] is True
+        assert sections["sec-ch1-intro"] is True
+        assert sections["sec-ch1-arguments"] is True
+        assert sections["sec-ch2"] is False
 
     def test_profile_hw_files_in_chapters(self, tmp_path):
         toc = _base_toc()
         cfg = _config(
-            lectures=[_lec("2027-01-06")],
+            lectures=[_lec("2027-01-06", ["sec-ch1-intro"])],
             assignments=[_hw("HW1", "2027-01-06", "2027-01-20")],
         )
         generate_profiles(cfg, toc, tmp_path)
@@ -469,7 +526,7 @@ class TestGenerateProfiles:
     def test_no_hw_files_before_assigned(self, tmp_path):
         toc = _base_toc()
         cfg = _config(
-            lectures=[_lec("2027-01-06")],
+            lectures=[_lec("2027-01-06", ["sec-ch1-intro"])],
             assignments=[_hw("HW1", "2027-01-08", "2027-01-20")],
         )
         generate_profiles(cfg, toc, tmp_path)
@@ -478,7 +535,7 @@ class TestGenerateProfiles:
 
     def test_stale_profiles_removed_on_rerun(self, tmp_path):
         toc = _base_toc()
-        cfg_two = _config(lectures=[_lec("2027-01-06"), _lec("2027-01-08", "sec-ch1-arguments")])
+        cfg_two = _config(lectures=[_lec("2027-01-06"), _lec("2027-01-08", ["sec-ch1-arguments"])])
         generate_profiles(cfg_two, toc, tmp_path)
         assert (tmp_path / "_quarto-2027-01-08.yml").exists()
 

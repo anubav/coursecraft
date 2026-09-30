@@ -25,8 +25,8 @@ def base_config() -> dict:
             "end_date": "2026-12-11",
         },
         "lectures": [
-            {"date": "2026-09-28", "notes_end": "sec-ch1-arguments"},
-            {"date": "2026-09-30", "notes_end": "sec-ch1-validity"},
+            {"date": "2026-09-28", "sections": ["sec-ch1-arguments"]},
+            {"date": "2026-09-30", "sections": ["sec-ch1-validity"]},
         ],
         "assignments": [
             {
@@ -63,31 +63,16 @@ class TestValidConfig:
         assert config.lectures[0].date < config.lectures[1].date
 
 
-class TestEffectiveCumulative:
-    def test_blank_notes_start_defaults_cumulative(self, base_config):
+class TestCumulative:
+    def test_cumulative_defaults_to_true(self, base_config):
         config = CourseConfig.model_validate(base_config)
-        assert config.lectures[0].effective_cumulative is True
+        assert config.lectures[0].cumulative is True
 
-    def test_explicit_notes_start_defaults_windowed(self, base_config):
-        data = copy.deepcopy(base_config)
-        data["lectures"][1]["notes_start"] = "sec-ch1-arguments"
-        config = CourseConfig.model_validate(data)
-        lec = [l for l in config.lectures if l.notes_start][0]
-        assert lec.effective_cumulative is False
-
-    def test_explicit_cumulative_true_overrides_windowed_default(self, base_config):
-        data = copy.deepcopy(base_config)
-        data["lectures"][1]["notes_start"] = "sec-ch1-arguments"
-        data["lectures"][1]["cumulative"] = True
-        config = CourseConfig.model_validate(data)
-        lec = [l for l in config.lectures if l.notes_start][0]
-        assert lec.effective_cumulative is True
-
-    def test_explicit_cumulative_false_overrides_cumulative_default(self, base_config):
+    def test_cumulative_can_be_set_false(self, base_config):
         data = copy.deepcopy(base_config)
         data["lectures"][0]["cumulative"] = False
         config = CourseConfig.model_validate(data)
-        assert config.lectures[0].effective_cumulative is False
+        assert config.lectures[0].cumulative is False
 
 
 class TestLectureName:
@@ -118,13 +103,13 @@ class TestValidators:
 
     def test_bad_label_format_rejected(self, base_config):
         data = copy.deepcopy(base_config)
-        data["lectures"][0]["notes_end"] = "Arguments"
+        data["lectures"][0]["sections"] = ["Arguments"]
         with pytest.raises(ValidationError, match="should be a section label"):
             CourseConfig.model_validate(data)
 
-    def test_bad_notes_start_label_also_rejected(self, base_config):
+    def test_all_sections_labels_validated(self, base_config):
         data = copy.deepcopy(base_config)
-        data["lectures"][0]["notes_start"] = "Arguments"
+        data["lectures"][0]["sections"] = ["sec-ch1-valid", "BadLabel"]
         with pytest.raises(ValidationError, match="should be a section label"):
             CourseConfig.model_validate(data)
 

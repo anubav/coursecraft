@@ -91,8 +91,8 @@ VALID_COURSE = {
         "end_date": "2026-12-11",
     },
     "lectures": [
-        {"date": "2026-09-28", "notes_end": "sec-ch1-arguments"},
-        {"date": "2026-09-30", "notes_end": "sec-ch1-validity"},
+        {"date": "2026-09-28", "sections": ["sec-ch1-arguments"]},
+        {"date": "2026-09-30", "sections": ["sec-ch1-validity"]},
     ],
     "assignments": [
         {
@@ -501,7 +501,7 @@ class TestUpdate:
 
         import copy as _copy
         bad_config = _copy.deepcopy(VALID_COURSE)
-        bad_config["lectures"][0]["notes_end"] = "sec-ch1-ghost"
+        bad_config["lectures"][0]["sections"] = ["sec-ch1-ghost"]
         cy.write_text(yaml.dump(bad_config))
 
         with pytest.raises(UpdateError, match="validation failed"):
@@ -726,7 +726,7 @@ class TestUpdate:
             "{#sec-ch1-arguments}", "{#sec-ch1-premises}"
         ))
 
-        # course.yml still references the old label -- must fail check A
+        # course.yml still references the old label in sections -- must fail check A
         with pytest.raises(UpdateError, match="sec-ch1-arguments"):
             update(notes_dir=notes, course_dir=course,
                    course_yaml=cy, toc_out=toc_out)
@@ -740,7 +740,7 @@ class TestUpdate:
 # ---------------------------------------------------------------------------
 
 class TestWriteCourseManifest:
-    def _config_with_starts(self, tmp_path):
+    def _config_with_sections(self, tmp_path):
         import yaml
         from coursecraft.schema import CourseConfig
         cy = tmp_path / "course.yml"
@@ -759,9 +759,8 @@ class TestWriteCourseManifest:
                 "end_date": "2026-12-11",
             },
             "lectures": [
-                {"date": "2026-09-28", "notes_start": "sec-ch1-arguments",
-                 "notes_end": "sec-ch1-arguments"},
-                {"date": "2026-09-30", "notes_end": "sec-ch1-validity"},
+                {"date": "2026-09-28", "sections": ["sec-ch1-arguments", "sec-ch1-validity"]},
+                {"date": "2026-09-30"},  # no sections
             ],
             "assignments": [],
         }
@@ -769,25 +768,25 @@ class TestWriteCourseManifest:
         return CourseConfig.from_yaml(cy)
 
     def test_manifest_file_created(self, tmp_path):
-        config = self._config_with_starts(tmp_path)
+        config = self._config_with_sections(tmp_path)
         _write_course_manifest(config, tmp_path)
         assert (tmp_path / "coursecraft-manifest.json").exists()
 
     def test_manifest_is_valid_json(self, tmp_path):
-        config = self._config_with_starts(tmp_path)
+        config = self._config_with_sections(tmp_path)
         _write_course_manifest(config, tmp_path)
         data = json.loads((tmp_path / "coursecraft-manifest.json").read_text())
         assert isinstance(data, dict)
 
-    def test_lecture_with_start_label_included(self, tmp_path):
-        config = self._config_with_starts(tmp_path)
+    def test_lecture_with_sections_uses_first_label(self, tmp_path):
+        config = self._config_with_sections(tmp_path)
         _write_course_manifest(config, tmp_path)
         data = json.loads((tmp_path / "coursecraft-manifest.json").read_text())
         assert "2026-09-28" in data
         assert data["2026-09-28"] == "sec-ch1-arguments"
 
-    def test_lecture_without_start_label_omitted(self, tmp_path):
-        config = self._config_with_starts(tmp_path)
+    def test_lecture_without_sections_omitted(self, tmp_path):
+        config = self._config_with_sections(tmp_path)
         _write_course_manifest(config, tmp_path)
         data = json.loads((tmp_path / "coursecraft-manifest.json").read_text())
         assert "2026-09-30" not in data

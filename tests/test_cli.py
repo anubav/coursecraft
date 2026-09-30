@@ -150,8 +150,8 @@ class TestValidateCLI:
             "meeting_times": "e", "start_date": "2026-01-01", "end_date": "2026-06-01",
         },
         "lectures": [
-            {"date": "2026-01-05", "notes_end": "sec-ch1-arguments"},
-            {"date": "2026-01-07", "notes_end": "sec-ch1-validity"},
+            {"date": "2026-01-05", "sections": ["sec-ch1-arguments"]},
+            {"date": "2026-01-07", "sections": ["sec-ch1-validity"]},
         ],
         "assignments": [
             {"name": "hw-01", "assigned": "2026-01-07", "due": "2026-01-14",
@@ -176,7 +176,7 @@ class TestValidateCLI:
         notes.mkdir()
         self._make_notes_dir(notes)
         data = {**self.VALID_WITH_NOTES,
-                "lectures": [{"date": "2026-01-05", "notes_end": "sec-ch1-ghost"}]}
+                "lectures": [{"date": "2026-01-05", "sections": ["sec-ch1-ghost"]}]}
         f = tmp_path / "course.yml"
         f.write_text(yaml.dump(data))
 
@@ -189,7 +189,7 @@ class TestValidateCLI:
         """Without --notes, validate exits 0 even if labels would be wrong --
         it's schema-only mode and the cross-checks simply don't run."""
         data = {**self.VALID_WITH_NOTES,
-                "lectures": [{"date": "2026-01-05", "notes_end": "sec-missing"}]}
+                "lectures": [{"date": "2026-01-05", "sections": ["sec-missing"]}]}
         f = tmp_path / "course.yml"
         f.write_text(yaml.dump(data))
 

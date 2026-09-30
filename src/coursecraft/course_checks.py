@@ -1,20 +1,17 @@
 """
 Cross-validation checks between course.yml and notes/.
 
-These are the A/B/C/D checks run by `update` (step 3) before touching
+These are the A/B/C checks run by `update` (step 3) before touching
 course/ -- and exposed by `coursecraft validate --notes` for standalone
-debugging. All four run together and return every problem at once, not
+debugging. All three run together and return every problem at once, not
 stopping at the first failure.
 
-A: every notes_start/notes_end label used in any lecture exists in notes.
+A: every label in any lecture's sections list exists in notes.
 B: every exercise name in every assignment's exercises list has a .qmd file
    under notes/exercises/.
 C: every exercise with show_solutions=True has a matching file under
    notes/solutions/ -- but only checked when notes/solutions/ actually exists
    (its absence is valid if the instructor isn't using solutions yet).
-D: lectures' notes_end labels appear in non-decreasing document order
-   (catches a notes_end typo'd to point earlier than an already-covered
-   lecture, which check A alone can't detect since the label exists).
 """
 
 from pathlib import Path
@@ -24,23 +21,20 @@ from .toc import label_positions
 
 
 def check_labels_exist(config: CourseConfig, toc_data: dict) -> list[str]:
-    """Check A: every notes_start/notes_end label used in any lecture
-    must exist as a real labeled heading in notes (as found by build_toc).
-    Failure mode without this check: the frontier simply doesn't advance,
-    and the instructor finds out when a student asks why new material
-    isn't showing."""
+    """Check A: every label in any lecture's sections list must exist as a
+    real labeled heading in notes (as found by build_toc). Chapter-level
+    labels are valid (they auto-expand to all subsections in profiles).
+    Failure mode without this check: the section simply isn't shown, and
+    the instructor finds out when students report missing content."""
     known = set(label_positions(toc_data).keys())
     problems = []
     for i, lec in enumerate(config.lectures):
         name = config.lecture_name(i)
-        if lec.notes_start is not None and lec.notes_start not in known:
-            problems.append(
-                f"{name}: notes_start {lec.notes_start!r} not found in notes"
-            )
-        if lec.notes_end not in known:
-            problems.append(
-                f"{name}: notes_end {lec.notes_end!r} not found in notes"
-            )
+        for label in lec.sections:
+            if label not in known:
+                problems.append(
+                    f"{name}: sections label {label!r} not found in notes"
+                )
     return problems
 
 
@@ -83,47 +77,16 @@ def check_solutions_exist(config: CourseConfig, notes_root: str | Path) -> list[
     return problems
 
 
-def check_label_ordering(config: CourseConfig, toc_data: dict) -> list[str]:
-    """Check D: each lecture's notes_end must appear at the same or a later
-    position in the document than the previous lecture's notes_end. Catches a
-    notes_end typo'd to point at content earlier in the book than an already-
-    covered lecture -- which check A alone can't catch (the label exists, it's
-    just the wrong one). Lectures whose notes_end isn't found in toc_data are
-    skipped (check A already covers that case) without resetting the frontier,
-    so subsequent lectures are still compared against the last valid position."""
-    positions = label_positions(toc_data)
-    problems = []
-    prev_pos = -1
-    prev_name: str | None = None
-
-    for i, lec in enumerate(config.lectures):
-        name = config.lecture_name(i)
-        end_label = lec.notes_end
-        if end_label not in positions:
-            continue  # A already flags this; don't cascade
-        end_pos = positions[end_label]
-        if prev_pos >= 0 and end_pos < prev_pos:
-            problems.append(
-                f"{name}: notes_end {end_label!r} (position {end_pos}) is before "
-                f"{prev_name}'s notes_end (position {prev_pos})"
-            )
-        prev_pos = end_pos
-        prev_name = name
-
-    return problems
-
-
 def run_course_checks(
     config: CourseConfig,
     notes_root: str | Path,
     toc_data: dict,
 ) -> dict[str, list[str]]:
-    """Run all four checks, returning a dict keyed by check name (including
+    """Run all three checks, returning a dict keyed by check name (including
     checks that found nothing, so a caller can report a clean summary)."""
     notes_root = Path(notes_root)
     return {
         "check_labels_exist": check_labels_exist(config, toc_data),
         "check_exercises_exist": check_exercises_exist(config, notes_root),
         "check_solutions_exist": check_solutions_exist(config, notes_root),
-        "check_label_ordering": check_label_ordering(config, toc_data),
     }

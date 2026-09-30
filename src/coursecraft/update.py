@@ -4,7 +4,7 @@ coursecraft update -- all ten steps.
 The ten-step flow:
   1. Build toc by scanning notes/ directly (never reads toc.yml off disk)
   2. Write toc.yml as a side effect of step 1
-  3. Validate course.yml against notes/ (A/B/C/D) -- abort if invalid,
+  3. Validate course.yml against notes/ (A/B/C) -- abort if invalid,
      course/ must not be touched at all while the config is broken
   4. Unlock course/ (undo the read-only chmod from the previous run --
      no-op on first update since files are already writable)
@@ -27,7 +27,6 @@ import os
 import re
 import shutil
 from pathlib import Path
-from typing import Union
 
 import yaml
 from pydantic import ValidationError
@@ -56,12 +55,12 @@ def _git(cmd: list[str], env: dict | None = None) -> None:
 
 def _write_course_manifest(config: CourseConfig, course_path: Path) -> None:
     """Write coursecraft-manifest.json mapping each lecture date to its
-    notes_start label. The CI deploy workflow reads this to anchor the
+    first section label. The CI deploy workflow reads this to anchor the
     landing-page redirect to the first section of the current lecture."""
     data = {
-        lec.date.isoformat(): lec.notes_start
+        lec.date.isoformat(): lec.sections[0]
         for lec in config.lectures
-        if lec.notes_start
+        if lec.sections
     }
     (course_path / "coursecraft-manifest.json").write_text(
         json.dumps(data, indent=2), encoding="utf-8"
@@ -226,13 +225,14 @@ def _copy_notes(notes_root: Path, course_path: Path, manifest: NotesManifest) ->
 # ---------------------------------------------------------------------------
 
 def update(
-    notes_dir: Union[str, Path] = "notes",
-    course_dir: Union[str, Path] = "course",
-    course_yaml: Union[str, Path] = "course.yml",
-    toc_out: Union[str, Path] = "toc.yml",
+    notes_dir: str | Path = "notes",
+    course_dir: str | Path = "course",
+    course_yaml: str | Path = "course.yml",
+    toc_out: str | Path = "toc.yml",
     push: bool = False,
+    lock: bool = True,
 ) -> None:
-    """Run all ten update steps, optionally pushing course/ to its remote.
+    """Run all update steps, optionally skipping the read-only lock and/or pushing.
 
     Raises UpdateError for any condition that should abort the run --
     missing directories, invalid course.yml, failed validation checks.
@@ -301,7 +301,8 @@ def update(
     _write_course_manifest(config, course_path)
 
     # Step 9: lock course/ (local safeguard against accidental hand-editing)
-    lock_course(course_path)
+    if lock:
+        lock_course(course_path)
 
     # Step 10: commit course/
     _commit_course(course_path)
