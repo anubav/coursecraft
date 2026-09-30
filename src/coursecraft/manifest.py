@@ -8,12 +8,42 @@ same for every section built from a given notes repo. See
 ARCHITECTURE.md for the full rationale.
 """
 
+from importlib.metadata import version as _pkg_version, PackageNotFoundError
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
 
 SUPPORTED_SPEC_VERSIONS = {"1.0"}
+
+
+def _parse_semver(v: str) -> tuple[int, ...]:
+    return tuple(int(x) for x in v.strip().split("."))
+
+
+def check_requires(requires: str) -> None:
+    """Raise ValueError if the installed coursecraft doesn't satisfy `requires`.
+
+    Only '>=' constraints are supported. When coursecraft isn't installed as a
+    package (e.g. running from source in a dev checkout), the check is skipped."""
+    requires = requires.strip()
+    if not requires.startswith(">="):
+        raise ValueError(
+            f"Unsupported requires constraint: {requires!r} (only '>=' is supported)"
+        )
+    minimum_str = requires[2:].strip()
+    minimum = _parse_semver(minimum_str)
+    try:
+        current_str = _pkg_version("coursecraft")
+    except PackageNotFoundError:
+        return  # dev checkout -- skip
+    current = _parse_semver(current_str)
+    if current < minimum:
+        raise ValueError(
+            f"notes repo requires coursecraft >= {minimum_str}, "
+            f"but {current_str} is installed. "
+            f"Upgrade with: pip install --upgrade coursecraft"
+        )
 
 
 class Conventions(BaseModel):
@@ -34,6 +64,7 @@ class Conventions(BaseModel):
 
 class NotesManifest(BaseModel):
     coursecraft_spec: str
+    requires: str | None = None
     conventions: Conventions
 
     model_config = {"extra": "forbid"}

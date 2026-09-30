@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "coursecraft"
-version = "0.1.0"
+version = "0.2.0"
 description = "Generate section-specific course sites from a logic-notes-style master repo"
 requires-python = ">=3.10"
 dependencies = ["pyyaml", "pydantic>=2"]

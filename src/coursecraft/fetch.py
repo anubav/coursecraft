@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from ._gitutil import run_git, GitCommandError
+from .manifest import NotesManifest, check_requires
 
 
 def _install_pre_commit_hooks(target: Path) -> bool:
@@ -97,6 +98,15 @@ def fetch_notes(
 
     _run(["git", "-C", str(target), "checkout", "-b", branch])
     _run(["git", "-C", str(target), "push", "-u", "origin", branch])
+
+    manifest_path = target / "coursecraft.yml"
+    if manifest_path.exists():
+        try:
+            manifest = NotesManifest.from_yaml(manifest_path)
+            if manifest.requires:
+                check_requires(manifest.requires)
+        except ValueError as e:
+            raise FetchNotesError(str(e)) from e
 
     _install_pre_commit_hooks(target)
 

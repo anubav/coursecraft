@@ -35,7 +35,7 @@ from ._gitutil import run_git, GitCommandError, coursecraft_env
 from .course_checks import run_course_checks
 from .hw import generate_homework_files
 from .instrument import instrument
-from .manifest import NotesManifest
+from .manifest import NotesManifest, check_requires
 from .profiles import generate_profiles
 from .schema import CourseConfig
 from .syllabus import generate_syllabus
@@ -288,6 +288,11 @@ def update(
         manifest = NotesManifest.from_yaml(notes_root / "coursecraft.yml")
     except (FileNotFoundError, ValidationError) as e:
         raise UpdateError(f"could not load notes manifest: {e}") from e
+    if manifest.requires:
+        try:
+            check_requires(manifest.requires)
+        except ValueError as e:
+            raise UpdateError(str(e)) from e
     _copy_notes(notes_root, course_path, manifest)
 
     # Step 5b: strip chapters/appendices from base _quarto.yml so profiles
