@@ -274,6 +274,12 @@ def update(
     # Step 4: unlock course/ (idempotent -- no-op if already writable)
     unlock_course(course_path)
 
+    # Step 4b: copy course.yml into course/ so it's version-controlled there
+    course_yml_src = Path(course_yaml).resolve()
+    course_yml_dst = course_path / "course.yml"
+    if course_yml_src != course_yml_dst.resolve():
+        shutil.copy2(course_yml_src, course_yml_dst)
+
     # Step 5: copy + instrument
     # The manifest was already loaded by build_toc (step 1); we load it
     # again here rather than thread it through the call chain, since it's
